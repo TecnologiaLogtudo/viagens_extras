@@ -461,11 +461,26 @@ def company_manager(
     supervisors = session.exec(select(User).where(User.role == UserRole.BASE_SUPERVISOR)).all()
     partners = session.exec(select(User).where(User.role == UserRole.PARTNER_REQUESTER)).all()
     
-    # Get supervisor base links
+    # Get supervisor base links and covered companies derived from selected bases/contracts.
     supervisor_base_ids = {}
+    supervisor_company_names = {}
     for sup in supervisors:
         supervisor_base_ids[sup.id] = [b.id for b in sup.bases]
-        
+        covered_company_ids = set()
+        for base in sup.bases:
+            links = session.exec(select(CompanyBase).where(CompanyBase.base_id == base.id)).all()
+            covered_company_ids.update(link.company_id for link in links)
+        names = []
+        for cid in covered_company_ids:
+            comp = session.get(Company, cid)
+            if comp:
+                names.append(comp.name)
+        supervisor_company_names[sup.id] = sorted(names)
+
+    partner_base_names = {}
+    for p in partners:
+        partner_base_names[p.id] = [b.name for b in p.bases]
+
     # Get partner company base links (SLA)
     company_base_info = session.exec(select(CompanyBase)).all()
     
@@ -479,6 +494,8 @@ def company_manager(
             "supervisors": supervisors,
             "partners": partners,
             "supervisor_base_ids": supervisor_base_ids,
+            "supervisor_company_names": supervisor_company_names,
+            "partner_base_names": partner_base_names,
             "company_base_info": company_base_info,
             "roles": UserRole,
             "title": "Empresa | Gerencial",
@@ -501,6 +518,9 @@ def register_supervisor(
     if isinstance(user, RedirectResponse):
         return user
         
+    if len(base_ids) == 0:
+        return _redirect("/empresa/gerencial?error=Selecione+ao+menos+uma+base+para+o+supervisor")
+
     normalized_email = email.strip().lower()
     existing = session.exec(select(User).where(User.email == normalized_email)).first()
     if existing:
@@ -516,7 +536,11 @@ def register_supervisor(
     session.add(new_user)
     session.flush()
     
-    for b_id in base_ids:
+    unique_base_ids = sorted(set(base_ids))
+    for b_id in unique_base_ids:
+        base = session.get(Base, b_id)
+        if not base:
+            return _redirect("/empresa/gerencial?error=Base+invalida+selecionada")
         session.add(UserBaseLink(user_id=new_user.id, base_id=b_id))
         
     session.commit()
@@ -529,8 +553,9 @@ def register_partner(
     full_name: str = Form(...),
     email: str = Form(...),
     password: str = Form(...),
-    company_id: int = Form(...),
-    base_id: int = Form(...),
+    company_name: str = Form(...),
+    phone: str = Form(default=""),
+    base_ids: List[int] = Form(...),
     sla_minutes: int = Form(...),
     session: Session = Depends(get_session),
 ):
@@ -538,37 +563,59 @@ def register_partner(
     if isinstance(user, RedirectResponse):
         return user
         
+    if len(base_ids) == 0:
+        return _redirect("/empresa/gerencial?error=Selecione+ao+menos+uma+base+para+o+parceiro")
     normalized_email = email.strip().lower()
     existing = session.exec(select(User).where(User.email == normalized_email)).first()
     if existing:
         return _redirect("/empresa/gerencial?error=Email+já+cadastrado")
-        
-    company = session.get(Company, company_id)
+    normalized_company_name = company_name.strip()
+    if not normalized_company_name:
+        return _redirect("/empresa/gerencial?error=Empresa+é+obrigatória")
+    phone_digits = re.sub(r"\D", "", phone.strip())
+    if phone_digits and not PHONE_BR_DIGITS_RE.match(phone_digits):
+        return _redirect("/empresa/gerencial?error=Telefone+invalido.+Use+DDD+com+10+ou+11+digitos.")
+
+    company = session.exec(select(Company).where(Company.name == normalized_company_name)).first()
+    company_created = False
+    if not company:
+        company = Company(name=normalized_company_name, cnpj="PENDENTE")
+        session.add(company)
+        session.flush()
+        company_created = True
     
     new_user = User(
         full_name=full_name,
         email=normalized_email,
         role=UserRole.PARTNER_REQUESTER,
-        company_id=company_id,
+        company_id=company.id,
         company_name=company.name,
+        phone=_format_phone_br(phone_digits) if phone_digits else None,
         password_hash=hash_password(password),
         is_active=True
     )
     session.add(new_user)
+    session.flush()
     
-    # Ensure company-base link with SLA
-    existing_cb = session.exec(select(CompanyBase).where(
-        and_(CompanyBase.company_id == company_id, CompanyBase.base_id == base_id)
-    )).first()
-    
-    if existing_cb:
-        existing_cb.contract_sla_minutes = sla_minutes
-        session.add(existing_cb)
-    else:
-        session.add(CompanyBase(company_id=company_id, base_id=base_id, contract_sla_minutes=sla_minutes))
+    unique_base_ids = sorted(set(base_ids))
+    for b_id in unique_base_ids:
+        base = session.get(Base, b_id)
+        if not base:
+            return _redirect("/empresa/gerencial?error=Base+invalida+selecionada")
+        session.add(UserBaseLink(user_id=new_user.id, base_id=b_id))
+        existing_cb = session.exec(select(CompanyBase).where(
+            and_(CompanyBase.company_id == company.id, CompanyBase.base_id == b_id)
+        )).first()
+        if existing_cb:
+            existing_cb.contract_sla_minutes = sla_minutes
+            session.add(existing_cb)
+        else:
+            session.add(CompanyBase(company_id=company.id, base_id=b_id, contract_sla_minutes=sla_minutes))
         
     session.commit()
-    return _redirect("/empresa/gerencial?message=Parceiro+cadastrado+com+sucesso")
+    if company_created:
+        return _redirect("/empresa/gerencial?message=Parceiro+cadastrado+com+sucesso.+Empresa+criada+automaticamente+e+vinculos+de+base+atualizados.")
+    return _redirect("/empresa/gerencial?message=Parceiro+cadastrado+com+sucesso.+Vinculos+de+base+atualizados.")
 
 
 @router.get("/empresa/financeiro", response_class=HTMLResponse)

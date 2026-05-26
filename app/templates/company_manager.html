@@ -34,13 +34,18 @@
     <div class="table-wrap">
       <table>
         <thead>
-          <tr><th>Nome</th><th>E-mail</th><th>Bases</th></tr>
+          <tr><th>Nome</th><th>E-mail</th><th>Empresas Cobertas</th><th>Bases</th></tr>
         </thead>
         <tbody>
           {% for sup in supervisors %}
           <tr>
             <td>{{ sup.full_name }}</td>
             <td>{{ sup.email }}</td>
+            <td>
+              {% for company_name in supervisor_company_names.get(sup.id, []) %}
+              <span class="pill confirmed">{{ company_name }}</span>
+              {% endfor %}
+            </td>
             <td>
               {% for b in sup.bases %}
               <span class="pill status-available">{{ b.name }}</span>
@@ -65,17 +70,16 @@
       <label>Senha Provisória
         <input type="password" name="password" required />
       </label>
-      <label class="full">Empresa
-        <select name="company_id" required>
-          {% for c in companies %}
-          <option value="{{ c.id }}">{{ c.name }} ({{ c.cnpj }})</option>
-          {% endfor %}
-        </select>
+      <label>Telefone
+        <input name="phone" placeholder="71 99876-5213" />
       </label>
-      <label>Base de Atuação
-        <select name="base_id" required>
+      <label class="full">Empresa
+        <input name="company_name" required placeholder="Digite o nome da empresa" />
+      </label>
+      <label class="full">Bases de Atuação (Segure Ctrl para selecionar várias)
+        <select name="base_ids" multiple required style="min-height: 100px;">
           {% for b in bases %}
-          <option value="{{ b.id }}">{{ b.name }}</option>
+          <option value="{{ b.id }}">{{ b.name }} ({{ b.location }})</option>
           {% endfor %}
         </select>
       </label>
@@ -89,13 +93,19 @@
     <div class="table-wrap">
       <table>
         <thead>
-          <tr><th>Nome</th><th>Empresa</th></tr>
+          <tr><th>Nome</th><th>Empresa</th><th>Telefone</th><th>Bases</th></tr>
         </thead>
         <tbody>
           {% for p in partners %}
           <tr>
             <td>{{ p.full_name }}</td>
             <td>{{ p.company_name }}</td>
+            <td>{{ p.phone or '-' }}</td>
+            <td>
+              {% for base_name in partner_base_names.get(p.id, []) %}
+              <span class="pill status-available">{{ base_name }}</span>
+              {% endfor %}
+            </td>
           </tr>
           {% endfor %}
         </tbody>

@@ -5,7 +5,7 @@ from sqlmodel import Session, select
 
 from app.db import engine
 from app.main import app
-from app.models import Base, Company, DecisionType, OperationalConfirmation, RequestStatus, TravelRequest, User
+from app.models import Base, Company, CompanyBase, DecisionType, OperationalConfirmation, RequestStatus, UserBaseLink, TravelRequest, User
 from app.services.workflow import DomainError
 
 
@@ -168,3 +168,104 @@ def test_status_labels_by_profile_and_partner_cancel_action(client: TestClient):
     login(client, "supervisor@logtudo.local", "supervisor123")
     supervisor_page = client.get("/empresa/operacoes")
     assert "Confirmado" in supervisor_page.text
+
+
+def test_manager_register_partner_with_new_company_and_multiple_bases(client: TestClient):
+    login(client, "gerente@logtudo.local", "gerente123")
+    with Session(engine) as session:
+        base1 = session.exec(select(Base)).first()
+        base2 = Base(name="Base Feira", location="Feira de Santana", sla_minutes=30, min_advance_minutes=60)
+        session.add(base2)
+        session.commit()
+        session.refresh(base2)
+        base_ids = [base1.id, base2.id]
+
+    resp = client.post(
+        "/empresa/gerencial/partners/new",
+        data={
+            "full_name": "Parceiro Multi",
+            "email": f"multi-{int(datetime.now(timezone.utc).timestamp())}@test.local",
+            "password": "senha1234",
+            "company_name": "Empresa Nova Multi",
+            "phone": "71999887766",
+            "base_ids": base_ids,
+            "sla_minutes": 45,
+        },
+        follow_redirects=False,
+    )
+    assert resp.status_code == 303
+    assert "/empresa/gerencial?message=" in resp.headers["location"]
+
+    with Session(engine) as session:
+        company = session.exec(select(Company).where(Company.name == "Empresa Nova Multi")).first()
+        assert company is not None
+        partner = session.exec(select(User).where(User.email.like("multi-%@test.local")).order_by(User.id.desc())).first()
+        assert partner is not None
+        assert partner.company_id == company.id
+        links = session.exec(select(UserBaseLink).where(UserBaseLink.user_id == partner.id)).all()
+        assert len(links) == 2
+        cbs = session.exec(select(CompanyBase).where(CompanyBase.company_id == company.id)).all()
+        assert len(cbs) >= 2
+
+
+def test_manager_register_partner_reuses_existing_company(client: TestClient):
+    login(client, "gerente@logtudo.local", "gerente123")
+    with Session(engine) as session:
+        company = session.exec(select(Company).where(Company.name == "Parceiro Exemplo")).first()
+        count_before = len(session.exec(select(Company).where(Company.name == "Parceiro Exemplo")).all())
+        base = session.exec(select(Base)).first()
+
+    resp = client.post(
+        "/empresa/gerencial/partners/new",
+        data={
+            "full_name": "Parceiro Reuso",
+            "email": f"reuso-{int(datetime.now(timezone.utc).timestamp())}@test.local",
+            "password": "senha1234",
+            "company_name": "Parceiro Exemplo",
+            "phone": "71988776655",
+            "base_ids": [base.id],
+            "sla_minutes": 30,
+        },
+        follow_redirects=False,
+    )
+    assert resp.status_code == 303
+
+    with Session(engine) as session:
+        count_after = len(session.exec(select(Company).where(Company.name == "Parceiro Exemplo")).all())
+        assert count_after == count_before
+        partner = session.exec(select(User).where(User.email.like("reuso-%@test.local")).order_by(User.id.desc())).first()
+        assert partner is not None
+        assert partner.company_id == company.id
+
+
+def test_supervisor_listing_shows_derived_companies(client: TestClient):
+    login(client, "gerente@logtudo.local", "gerente123")
+    with Session(engine) as session:
+        base1 = session.exec(select(Base)).first()
+        base2 = Base(name="Base Camaçari", location="Camaçari", sla_minutes=30, min_advance_minutes=60)
+        company2 = Company(name="Empresa Coberta 2", cnpj="22.222.222/0001-22")
+        session.add(base2)
+        session.add(company2)
+        session.commit()
+        session.refresh(base2)
+        session.refresh(company2)
+        session.add(CompanyBase(company_id=company2.id, base_id=base2.id, contract_sla_minutes=30))
+        session.commit()
+        base1_id = base1.id
+        base2_id = base2.id
+
+    email = f"supmulti-{int(datetime.now(timezone.utc).timestamp())}@test.local"
+    resp = client.post(
+        "/empresa/gerencial/supervisors/new",
+        data={
+            "full_name": "Supervisor Multi",
+            "email": email,
+            "password": "senha1234",
+            "base_ids": [base1_id, base2_id],
+        },
+        follow_redirects=False,
+    )
+    assert resp.status_code == 303
+
+    page = client.get("/empresa/gerencial")
+    assert "Empresa Coberta 2" in page.text
