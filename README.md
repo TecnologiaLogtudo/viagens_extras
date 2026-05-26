@@ -20,5 +20,26 @@ Acesse `http://127.0.0.1:8000/login`.
 
 - Autenticação baseada em sessão com cookie HTTP-only.
 - Portais segregados por rota: `/partner/*` e `/empresa/*`.
-- Notificações por e-mail são persistidas em tabela `notification`.
+- Notificações por e-mail são persistidas em tabela `notification` e enviadas via SMTP.
 - Comprovantes PDF são salvos em `app/data/documents/`.
+- Convenção ORM: este projeto usa SQLModel com `Relationship` tipado como `list["Model"]` (evitar `Mapped[...]` enquanto não houver migração completa para estilo declarativo SQLAlchemy 2.0).
+
+## Configuração de e-mail SMTP
+
+Defina as variáveis de ambiente antes de iniciar a aplicação:
+
+```env
+SMTP_HOST=smtp.seuprovedor.com
+SMTP_PORT=587
+SMTP_USERNAME=seu-usuario
+SMTP_PASSWORD=sua-senha-ou-app-password
+SMTP_FROM_EMAIL=naoresponda@suaempresa.com
+SMTP_USE_TLS=true
+```
+
+### Troubleshooting
+
+- OTP não chegou: verifique spam/lixo eletrônico.
+- Erro de autenticação SMTP: valide usuário/senha e se o provedor exige senha de app.
+- Erro de conexão: confira host/porta e liberação de firewall.
+- TLS: se seu provedor não usa TLS na conexão SMTP, ajuste `SMTP_USE_TLS=false`.

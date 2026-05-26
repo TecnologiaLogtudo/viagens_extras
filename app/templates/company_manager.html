@@ -1,57 +1,130 @@
 {% extends 'base.html' %}
 {% block content %}
 <section class="hero">
-  <h2>Empresa | Visão Gerencial</h2>
-  <p>Consolidação operacional e financeira.</p>
+  <h2>Empresa | Gerencial</h2>
+  <p>Gestão de Parceiros, Supervisores e parametrização de Bases.</p>
+  {% if message %}<p class="pill green">{{ message }}</p>{% endif %}
+  {% if error %}<p class="pill red">{{ error }}</p>{% endif %}
 </section>
 
-<section class="panel">
-  <div class="metrics">
-    <div><span>Abertos</span><strong>{{ counts.open }}</strong></div>
-    <div><span>Aguardando aceite</span><strong>{{ counts.pending_acceptance }}</strong></div>
-    <div><span>Em execução</span><strong>{{ counts.in_execution }}</strong></div>
-    <div><span>Concluídos</span><strong>{{ counts.completed }}</strong></div>
+<div class="split">
+  <section class="panel">
+    <h3>Cadastro de Supervisor</h3>
+    <form class="form-grid" method="post" action="/empresa/gerencial/supervisors/new">
+      <label class="full">Nome Completo
+        <input name="full_name" required />
+      </label>
+      <label>E-mail
+        <input type="email" name="email" required />
+      </label>
+      <label>Senha Provisória
+        <input type="password" name="password" required />
+      </label>
+      <label class="full">Bases sob controle (Segure Ctrl para selecionar várias)
+        <select name="base_ids" multiple required style="min-height: 100px;">
+          {% for b in bases %}
+          <option value="{{ b.id }}">{{ b.name }} ({{ b.location }})</option>
+          {% endfor %}
+        </select>
+      </label>
+      <button class="full" type="submit">Cadastrar Supervisor</button>
+    </form>
+
+    <h3 style="margin-top: 2rem;">Supervisores Ativos</h3>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr><th>Nome</th><th>E-mail</th><th>Bases</th></tr>
+        </thead>
+        <tbody>
+          {% for sup in supervisors %}
+          <tr>
+            <td>{{ sup.full_name }}</td>
+            <td>{{ sup.email }}</td>
+            <td>
+              {% for b in sup.bases %}
+              <span class="pill status-available">{{ b.name }}</span>
+              {% endfor %}
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="panel">
+    <h3>Cadastro de Parceiro</h3>
+    <form class="form-grid" method="post" action="/empresa/gerencial/partners/new">
+      <label class="full">Nome Completo
+        <input name="full_name" required />
+      </label>
+      <label>E-mail
+        <input type="email" name="email" required />
+      </label>
+      <label>Senha Provisória
+        <input type="password" name="password" required />
+      </label>
+      <label class="full">Empresa
+        <select name="company_id" required>
+          {% for c in companies %}
+          <option value="{{ c.id }}">{{ c.name }} ({{ c.cnpj }})</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label>Base de Atuação
+        <select name="base_id" required>
+          {% for b in bases %}
+          <option value="{{ b.id }}">{{ b.name }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label>SLA Contratual (minutos)
+        <input type="number" name="sla_minutes" value="30" required />
+      </label>
+      <button class="full" type="submit">Cadastrar Parceiro</button>
+    </form>
+
+    <h3 style="margin-top: 2rem;">Parceiros Ativos</h3>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr><th>Nome</th><th>Empresa</th></tr>
+        </thead>
+        <tbody>
+          {% for p in partners %}
+          <tr>
+            <td>{{ p.full_name }}</td>
+            <td>{{ p.company_name }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+</div>
+
+<section class="panel" style="margin-top: 1rem;">
+  <h3>Configuração de Contratos (SLA por Base)</h3>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr><th>Empresa</th><th>Base</th><th>SLA Acordado</th></tr>
+      </thead>
+      <tbody>
+        {% for cb in company_base_info %}
+        <tr>
+          <td>
+            {% for c in companies if c.id == cb.company_id %}{{ c.name }}{% endfor %}
+          </td>
+          <td>
+            {% for b in bases if b.id == cb.base_id %}{{ b.name }}{% endfor %}
+          </td>
+          <td>{{ cb.contract_sla_minutes }} min</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
   </div>
-</section>
-
-<section class="panel split">
-  <article class="card">
-    <h3>Pipeline operacional</h3>
-    <div class="table-wrap">
-      <table>
-        <thead><tr><th>Protocolo</th><th>Status</th><th>Base</th></tr></thead>
-        <tbody>
-        {% for req in travel_requests %}
-        <tr>
-          <td>{{ req.protocol }}</td>
-          <td><span class="pill {{ req.status.value }}">{{ req.status.value }}</span></td>
-          <td>{{ bases[req.base_id].name }}</td>
-        </tr>
-        {% endfor %}
-        </tbody>
-      </table>
-    </div>
-  </article>
-
-  <article class="card">
-    <h3>Faturáveis</h3>
-    <div class="inline-row">
-      <a class="button-like" href="/empresa/financeiro/billing.csv">Exportar CSV</a>
-    </div>
-    <div class="table-wrap">
-      <table>
-        <thead><tr><th>Protocolo</th><th>Empresa</th><th>Base</th></tr></thead>
-        <tbody>
-        {% for item in items %}
-        <tr>
-          <td>{{ item.protocol }}</td>
-          <td>{{ item.company_id }}</td>
-          <td>{{ item.base_id }}</td>
-        </tr>
-        {% endfor %}
-        </tbody>
-      </table>
-    </div>
-  </article>
 </section>
 {% endblock %}

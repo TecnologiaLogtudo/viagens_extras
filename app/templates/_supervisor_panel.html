@@ -6,17 +6,22 @@
     <div class="selected-meta">
       <span><strong>Protocolo:</strong> {{ selected_request.protocol }}</span>
       <span><strong>Base:</strong> {{ selected_request.base_id }}</span>
-      <span><strong>Status:</strong> <span class="pill {{ selected_request.status.value }}">{{ selected_request.status.value }}</span></span>
+      <span><strong>Status:</strong> <span class="pill {{ selected_request.status.value }}">{{ selected_request_status_label or selected_request.status.value }}</span></span>
     </div>
 
     <div class="driver-list">
       {% for driver in drivers_for_selected %}
+      {% set d_status = {
+          'available': 'Disponível',
+          'absent': 'Ausente',
+          'in_route': 'Em rota'
+      }.get(driver.activity_status.value, driver.activity_status.value) %}
       <div class="driver-row">
         <div>
           <strong>{{ driver.name }}</strong><br/>
           <small>{{ driver.phone or "Sem telefone" }}</small>
         </div>
-        <span class="pill status-{{ driver.activity_status.value }}">{{ driver.activity_status.value }}</span>
+        <span class="pill status-{{ driver.activity_status.value }}">{{ d_status }}</span>
       </div>
       <div class="driver-actions">
         {% if driver.phone %}

@@ -1,10 +1,8 @@
-from __future__ import annotations
-
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Optional
+from typing import List, Optional
 
-from sqlmodel import Field, SQLModel
+from sqlmodel import Field, SQLModel, Relationship
 
 
 class UserRole(str, Enum):
@@ -55,6 +53,11 @@ class Company(SQLModel, table=True):
     active: bool = True
 
 
+class UserBaseLink(SQLModel, table=True):
+    user_id: int = Field(foreign_key="user.id", primary_key=True)
+    base_id: int = Field(foreign_key="base.id", primary_key=True)
+
+
 class Base(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     name: str
@@ -62,12 +65,15 @@ class Base(SQLModel, table=True):
     sla_minutes: int = 30
     min_advance_minutes: int = 120
     active: bool = True
+    
+    users: List["User"] = Relationship(back_populates="bases", link_model=UserBaseLink)
 
 
 class CompanyBase(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     company_id: int = Field(foreign_key="company.id")
     base_id: int = Field(foreign_key="base.id")
+    contract_sla_minutes: Optional[int] = None
 
 
 class User(SQLModel, table=True):
@@ -83,6 +89,8 @@ class User(SQLModel, table=True):
     base_id: Optional[int] = Field(default=None, foreign_key="base.id")
     password_hash: str = ""
     is_active: bool = True
+
+    bases: List["Base"] = Relationship(back_populates="users", link_model=UserBaseLink)
 
 
 class Driver(SQLModel, table=True):

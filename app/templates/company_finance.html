@@ -18,7 +18,7 @@
         <td>{{ item.protocol }}</td>
         <td>{{ item.company_id }}</td>
         <td>{{ item.base_id }}</td>
-        <td><span class="pill {{ item.status.value }}">{{ item.status.value }}</span></td>
+        <td><span class="pill {{ item.status.value }}">{{ item_status_labels.get(item.id, item.status.value) }}</span></td>
         <td>{{ item.requested_datetime }}</td>
       </tr>
       {% endfor %}

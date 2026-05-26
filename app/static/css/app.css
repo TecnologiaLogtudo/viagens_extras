@@ -94,7 +94,7 @@ button {
   background: var(--deep);
   color: #f5f8f8;
   text-decoration: none;
-  padding: 0.5rem 0.8rem;
+  padding: 0.35rem 0.6rem;
   font-size: 0.82rem;
   font-weight: 700;
   cursor: pointer;
@@ -103,6 +103,28 @@ button {
 .context-nav a:hover,
 .button-like:hover,
 button:hover { filter: brightness(1.06); }
+
+.btn-cancel-x {
+  background: transparent !important;
+  color: var(--danger);
+  padding: 0 0.2rem;
+  font-size: 1.2rem;
+  font-weight: 900;
+  border-radius: 4px;
+  line-height: 1;
+}
+
+.btn-cancel-x:hover {
+  background: transparent !important;
+  opacity: 0.8;
+  filter: none;
+}
+
+.actions-container {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
 
 .logout-form { margin-left: auto; }
 
@@ -142,7 +164,7 @@ button:hover { filter: brightness(1.06); }
 
 .metrics {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 0.55rem;
 }
 
@@ -151,16 +173,22 @@ button:hover { filter: brightness(1.06); }
   border: 1px solid #d9d2c4;
   background: #fffbef;
   padding: 0.65rem;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 0.4rem;
 }
 
 .metrics span {
   display: block;
   color: var(--muted);
   font-size: 0.74rem;
+  line-height: 1.2;
 }
 
 .metrics strong {
   font: 800 1.6rem/1 "Sora", sans-serif;
+  margin-top: auto;
 }
 
 .form-grid {

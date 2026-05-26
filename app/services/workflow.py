@@ -3,6 +3,7 @@ from __future__ import annotations
 import csv
 import hashlib
 import io
+import logging
 import random
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -13,6 +14,7 @@ from reportlab.pdfgen import canvas
 from sqlmodel import Session, and_, select
 
 from app.auth import hash_password
+from app.services.email_sender import EmailDeliveryError, send_email
 from app.models import (
     Acceptance,
     Base,
@@ -27,18 +29,23 @@ from app.models import (
     Notification,
     NotificationType,
     OTPChallenge,
+    OperationalConfirmation,
     RequestStatus,
     TriageDecisionPayload,
     TravelRequest,
     TravelRequestCreate,
     User,
     UserRole,
+    UserBaseLink,
     Vehicle,
 )
 
 
 class DomainError(Exception):
     pass
+
+
+logger = logging.getLogger(__name__)
 
 
 def now_utc() -> datetime:
@@ -54,8 +61,14 @@ def ensure_aware(dt: datetime) -> datetime:
 def ensure_user_scope(user: User, request: TravelRequest) -> None:
     if user.role == UserRole.PARTNER_REQUESTER and user.company_id != request.company_id:
         raise DomainError("Acesso negado ao pedido de outra empresa.")
-    if user.role == UserRole.BASE_SUPERVISOR and user.base_id != request.base_id:
-        raise DomainError("Acesso negado ao pedido de outra base.")
+
+    # Supervisor can be scoped by explicit base links or legacy single base_id.
+    if user.role == UserRole.BASE_SUPERVISOR:
+        allowed_base_ids = {b.id for b in user.bases if b.id is not None}
+        if not allowed_base_ids and user.base_id is not None:
+            allowed_base_ids = {user.base_id}
+        if request.base_id not in allowed_base_ids:
+            raise DomainError("Acesso negado ao pedido de outra base.")
 
 
 OTP_VALID_MINUTES = 5
@@ -78,6 +91,12 @@ def validate_otp_resend_attempts(challenge: OTPChallenge) -> None:
         raise DomainError("Aguarde um minuto antes de reenviar o OTP.")
 
 
+def _get_operational_confirmation(session: Session, request_id: int) -> OperationalConfirmation | None:
+    return session.exec(
+        select(OperationalConfirmation).where(OperationalConfirmation.request_id == request_id)
+    ).first()
+
+
 def create_otp_challenge(
     session: Session,
     user: User,
@@ -97,15 +116,20 @@ def create_otp_challenge(
     )
     session.add(challenge)
     session.flush()
-    send_email_notification(
-        session,
-        NotificationType.OTP_SENT,
-        user.email,
-        f"OTP de aceite do pedido {request.protocol}",
-        f"Seu codigo OTP e: {code}. Valido por {OTP_VALID_MINUTES} minutos.",
-        request_id=request.id,
-        user_id=user.id,
-    )
+    try:
+        send_email_notification(
+            session,
+            NotificationType.OTP_SENT,
+            user.email,
+            f"OTP de aceite do pedido {request.protocol}",
+            f"Seu codigo OTP e: {code}. Valido por {OTP_VALID_MINUTES} minutos.",
+            request_id=request.id,
+            user_id=user.id,
+            strict_delivery=True,
+        )
+    except EmailDeliveryError as exc:
+        logger.exception("Falha no envio de OTP para request_id=%s", request.id)
+        raise DomainError("Nao foi possivel enviar o OTP agora. Verifique a configuracao de e-mail.") from exc
     log_event(session, request.id, user.id, "otp_sent", "otp_generated")
     session.commit()
     return code
@@ -117,6 +141,8 @@ def request_otp(session: Session, user: User, request: TravelRequest) -> str:
     ensure_user_scope(user, request)
     if request.status != RequestStatus.CONFIRMED:
         raise DomainError("OTP apenas para pedido confirmado.")
+    if not _get_operational_confirmation(session, request.id):
+        raise DomainError("Confirmacao operacional ausente. Reabra a triagem do pedido.")
 
     return create_otp_challenge(session, user, request)
 
@@ -127,6 +153,8 @@ def resend_otp(session: Session, user: User, request: TravelRequest) -> str:
     ensure_user_scope(user, request)
     if request.status != RequestStatus.CONFIRMED:
         raise DomainError("OTP apenas para pedido confirmado.")
+    if not _get_operational_confirmation(session, request.id):
+        raise DomainError("Confirmacao operacional ausente. Reabra a triagem do pedido.")
 
     current_challenge = _get_latest_otp_challenge(session, request.id, user.id)
     if current_challenge:
@@ -158,6 +186,7 @@ def send_email_notification(
     body: str,
     request_id: Optional[int] = None,
     user_id: Optional[int] = None,
+    strict_delivery: bool = False,
 ) -> None:
     session.add(
         Notification(
@@ -169,6 +198,12 @@ def send_email_notification(
             body=body,
         )
     )
+    try:
+        send_email(recipient, subject, body)
+    except EmailDeliveryError:
+        if strict_delivery:
+            raise
+        logger.exception("Falha ao enviar notificacao de e-mail para %s", recipient)
 
 
 def generate_protocol(session: Session) -> str:
@@ -237,10 +272,19 @@ def create_request(session: Session, user: User, payload: TravelRequestCreate) -
     return request
 
 
-def compute_sla(request: TravelRequest, base: Base) -> tuple[float, str]:
+def compute_sla(request: TravelRequest, base: Base, session: Optional[Session] = None) -> tuple[float, str]:
+    sla_minutes = base.sla_minutes
+    
+    if session:
+        cb = session.exec(select(CompanyBase).where(
+            and_(CompanyBase.company_id == request.company_id, CompanyBase.base_id == request.base_id)
+        )).first()
+        if cb and cb.contract_sla_minutes:
+            sla_minutes = cb.contract_sla_minutes
+
     # SQLite may return naive datetimes; normalize before subtraction.
     elapsed = (now_utc() - ensure_aware(request.created_at)).total_seconds() / 60
-    ratio = elapsed / max(base.sla_minutes, 1)
+    ratio = elapsed / max(sla_minutes, 1)
     if ratio >= 1:
         return ratio, "red"
     if ratio >= 0.7:
@@ -253,8 +297,8 @@ def triage_request(session: Session, user: User, request: TravelRequest, payload
         raise DomainError("Perfil sem permissão para triagem.")
     ensure_user_scope(user, request)
 
-    if request.status not in (RequestStatus.SUBMITTED, RequestStatus.TRIAGE):
-        raise DomainError("Pedido fora de status para triagem.")
+    if request.status not in (RequestStatus.SUBMITTED, RequestStatus.TRIAGE, RequestStatus.CONFIRMED):
+        raise DomainError("Pedido fora de status para triagem ou edição.")
 
     request.status = RequestStatus.TRIAGE
     request.updated_at = now_utc()
@@ -266,18 +310,35 @@ def triage_request(session: Session, user: User, request: TravelRequest, payload
         log_event(session, request.id, user.id, "request_refused", payload.refusal_reason)
     else:
         request.status = RequestStatus.CONFIRMED
-        session.add(
-            __import__("app.models", fromlist=["OperationalConfirmation"]).OperationalConfirmation(
-                request_id=request.id,
-                supervisor_user_id=user.id,
-                decision_type=payload.decision_type,
-                approved_quantity=payload.approved_quantity,
-                confirmed_datetime=payload.confirmed_datetime,
-                confirmed_vehicle_type=payload.confirmed_vehicle_type,
-                tariff_value=payload.tariff_value,
-                observations=payload.observations,
+        
+        # Check for existing confirmation to update it
+        existing_conf = session.exec(
+            select(OperationalConfirmation).where(OperationalConfirmation.request_id == request.id)
+        ).first()
+
+        if existing_conf:
+            existing_conf.supervisor_user_id = user.id
+            existing_conf.decision_type = payload.decision_type
+            existing_conf.approved_quantity = payload.approved_quantity
+            existing_conf.confirmed_datetime = payload.confirmed_datetime
+            existing_conf.confirmed_vehicle_type = payload.confirmed_vehicle_type
+            existing_conf.tariff_value = payload.tariff_value
+            existing_conf.observations = payload.observations
+            session.add(existing_conf)
+        else:
+            session.add(
+                OperationalConfirmation(
+                    request_id=request.id,
+                    supervisor_user_id=user.id,
+                    decision_type=payload.decision_type,
+                    approved_quantity=payload.approved_quantity,
+                    confirmed_datetime=payload.confirmed_datetime,
+                    confirmed_vehicle_type=payload.confirmed_vehicle_type,
+                    tariff_value=payload.tariff_value,
+                    observations=payload.observations,
+                )
             )
-        )
+        
         log_event(session, request.id, user.id, "request_confirmed", payload.decision_type.value)
 
         requester = session.get(User, request.requested_by_user_id)
@@ -292,6 +353,37 @@ def triage_request(session: Session, user: User, request: TravelRequest, payload
                 user_id=requester.id,
             )
 
+    session.add(request)
+    session.commit()
+
+
+def propose_change(session: Session, user: User, request: TravelRequest, payload: TravelRequestCreate):
+    if user.role != UserRole.PARTNER_REQUESTER:
+        raise DomainError("Apenas parceiro pode propor alteração.")
+    ensure_user_scope(user, request)
+
+    if request.status not in (RequestStatus.SUBMITTED, RequestStatus.TRIAGE, RequestStatus.CONFIRMED):
+        raise DomainError("Status atual não permite alteração.")
+
+    # Update request details
+    request.quantity = payload.quantity
+    request.requested_datetime = payload.requested_datetime
+    request.vehicle_type_requested = payload.vehicle_type_requested
+    request.origin = payload.origin
+    request.destination = payload.destination
+    request.cost_center = payload.cost_center
+    request.reason = payload.reason
+    request.notes = payload.notes
+    
+    # Reset status and clear confirmation
+    request.status = RequestStatus.SUBMITTED
+    request.updated_at = now_utc()
+    
+    existing_conf = _get_operational_confirmation(session, request.id)
+    if existing_conf:
+        session.delete(existing_conf)
+    
+    log_event(session, request.id, user.id, "request_modified_by_partner", "Partner proposed changes, resetting triage.")
     session.add(request)
     session.commit()
 
@@ -320,11 +412,7 @@ def sign_acceptance(session: Session, user: User, request: TravelRequest, code: 
     if incoming_hash != challenge.code_hash:
         raise DomainError("OTP invalido.")
 
-    confirmation = session.exec(
-        select(__import__("app.models", fromlist=["OperationalConfirmation"]).OperationalConfirmation).where(
-            __import__("app.models", fromlist=["OperationalConfirmation"]).OperationalConfirmation.request_id == request.id
-        )
-    ).first()
+    confirmation = _get_operational_confirmation(session, request.id)
     if not confirmation:
         raise DomainError("Confirmacao operacional ausente.")
 
@@ -363,6 +451,48 @@ def sign_acceptance(session: Session, user: User, request: TravelRequest, code: 
     session.commit()
     session.refresh(acceptance)
     return acceptance
+
+
+def can_partner_cancel_request(session: Session, request: TravelRequest) -> bool:
+    if request.status in (RequestStatus.SUBMITTED, RequestStatus.TRIAGE):
+        return True
+    if request.status != RequestStatus.CONFIRMED:
+        return False
+
+    confirmation = _get_operational_confirmation(session, request.id)
+    if not confirmation:
+        return False
+
+    cancel_deadline = ensure_aware(confirmation.confirmed_datetime) - timedelta(hours=24)
+    return now_utc() <= cancel_deadline
+
+
+def cancel_request(session: Session, user: User, request: TravelRequest, reason: str | None = None) -> TravelRequest:
+    if user.role != UserRole.PARTNER_REQUESTER:
+        raise DomainError("Somente parceiro pode cancelar.")
+    ensure_user_scope(user, request)
+
+    if request.status in (RequestStatus.SUBMITTED, RequestStatus.TRIAGE):
+        pass
+    elif request.status == RequestStatus.CONFIRMED:
+        confirmation = _get_operational_confirmation(session, request.id)
+        if not confirmation:
+            raise DomainError("Confirmacao operacional ausente. Reabra a triagem do pedido.")
+        cancel_deadline = ensure_aware(confirmation.confirmed_datetime) - timedelta(hours=24)
+        if now_utc() > cancel_deadline:
+            raise DomainError("Cancelamento indisponivel. Prazo contratual de 24h antes da viagem confirmado foi excedido.")
+    elif request.status == RequestStatus.CANCELED:
+        raise DomainError("Pedido ja cancelado.")
+    else:
+        raise DomainError("Cancelamento indisponivel para o status atual.")
+
+    request.status = RequestStatus.CANCELED
+    request.updated_at = now_utc()
+    session.add(request)
+    log_event(session, request.id, user.id, "request_canceled", reason or "")
+    session.commit()
+    session.refresh(request)
+    return request
 
 
 def dispatch_trip(session: Session, user: User, request: TravelRequest, driver_id: int, vehicle_id: int, planned_departure_at: datetime) -> Dispatch:
@@ -556,7 +686,7 @@ def seed_data(session: Session) -> None:
         created_link = False
         for base in bases:
             if base.id not in linked_base_ids:
-                session.add(CompanyBase(company_id=partner.company_id, base_id=base.id))
+                session.add(CompanyBase(company_id=partner.company_id, base_id=base.id, contract_sla_minutes=30))
                 created_link = True
         if created_link:
             session.commit()
@@ -572,6 +702,12 @@ def seed_data(session: Session) -> None:
             if not user.company_name:
                 user.company_name = "Logtudo"
                 changed = True
+            
+            # Ensure supervisor has at least its own base link if many-to-many is empty
+            if user.role == UserRole.BASE_SUPERVISOR and not user.bases and user.base_id:
+                session.add(UserBaseLink(user_id=user.id, base_id=user.base_id))
+                changed = True
+
             session.add(user)
         if changed:
             session.commit()
@@ -584,7 +720,7 @@ def seed_data(session: Session) -> None:
     session.add(base)
     session.flush()
 
-    session.add(CompanyBase(company_id=company.id, base_id=base.id))
+    session.add(CompanyBase(company_id=company.id, base_id=base.id, contract_sla_minutes=30))
 
     users = [
         User(
@@ -617,8 +753,13 @@ def seed_data(session: Session) -> None:
     for u in users:
         pwd = default_password_by_role.get(u.role, "logtudo123")
         u.password_hash = hash_password(pwd)
-    for u in users:
         session.add(u)
+    session.flush()
+
+    # Link supervisor
+    for u in users:
+        if u.role == UserRole.BASE_SUPERVISOR:
+            session.add(UserBaseLink(user_id=u.id, base_id=base.id))
 
     drivers = [
         Driver(name="Motorista 1", phone="71999990001", base_id=base.id),

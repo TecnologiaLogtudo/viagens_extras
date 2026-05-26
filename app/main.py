@@ -2,6 +2,7 @@ from pathlib import Path
 
 from fastapi import FastAPI, Response
 from fastapi.staticfiles import StaticFiles
+from dotenv import load_dotenv
 from starlette.middleware.sessions import SessionMiddleware
 from sqlmodel import Session
 
@@ -9,6 +10,8 @@ from app.db import engine, init_db
 from app.routes.web import router as web_router
 from app.services.fleet_import import import_fleet_from_excel
 from app.services.workflow import seed_data
+
+load_dotenv()
 
 app = FastAPI(title="Central de Viagens Extras MVP")
 app.add_middleware(
