@@ -1,0 +1,162 @@
+{% extends 'base.html' %}
+{% block content %}
+<section class="view-head">
+  <p class="view-overline">Operação em tempo real</p>
+  <h2>Dashboard</h2>
+  <p>Controle de ponta a ponta para solicitação, despacho e fechamento.</p>
+</section>
+
+<section class="metrics-strip">
+  <div><span>Abertos</span><strong>{{ counts.open }}</strong></div>
+  <div><span>Aguardando aceite</span><strong>{{ counts.pending_acceptance }}</strong></div>
+  <div><span>Em execução</span><strong>{{ counts.in_execution }}</strong></div>
+  <div><span>Concluídos</span><strong>{{ counts.completed }}</strong></div>
+</section>
+
+<section class="layout-duo">
+  <article class="surface-block">
+    <h3>Resumo do período</h3>
+    <ul class="clean-list">
+      <li>Parceiros ativos: <strong>{{ summary.partners }}</strong></li>
+      <li>Viagens no recorte: <strong>{{ summary.trips }}</strong></li>
+      <li>Motoristas cadastrados: <strong>{{ summary.drivers|length }}</strong></li>
+      <li>Veículos cadastrados: <strong>{{ summary.vehicles|length }}</strong></li>
+    </ul>
+  </article>
+
+  {% if user.role.value == 'partner_requester' %}
+  <article class="surface-block">
+    <h3>Nova solicitação</h3>
+    <form class="compact-grid" method="post" action="/requests/new?user_id={{ user.id }}">
+      <label>Base *
+        <select name="base_id" required>
+          {% for base in bases.values() %}
+          <option value="{{ base.id }}">{{ base.name }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label>Tipo *
+        <input name="request_type" value="extra" required />
+      </label>
+      <label>Data/Hora *
+        <input type="datetime-local" name="requested_datetime" required />
+      </label>
+      <label>Quantidade *
+        <input type="number" min="1" name="quantity" required />
+      </label>
+      <label>Origem *
+        <input name="origin" required />
+      </label>
+      <label>Destino *
+        <input name="destination" required />
+      </label>
+      <label>Veículos *
+        <input name="vehicle_type_requested" value="sedan" required />
+      </label>
+      <label>Centro de custo
+        <input name="cost_center" />
+      </label>
+      <label>Motivo
+        <input name="reason" />
+      </label>
+      <label class="full-span">Notas
+        <textarea name="notes"></textarea>
+      </label>
+      <button type="submit" class="full-span">Salvar solicitação</button>
+    </form>
+  </article>
+  {% endif %}
+</section>
+
+<section class="surface-block">
+  <h3>Solicitações operacionais</h3>
+  <div class="table-wrap">
+    <table class="data-table">
+      <thead>
+        <tr>
+          <th>Protocolo</th><th>Status</th><th>Base</th><th>SLA</th><th>Tipo</th><th>Qtd</th><th>Ações</th>
+        </tr>
+      </thead>
+      <tbody>
+      {% for req in travel_requests %}
+        {% set ratio, sla_color = sla_info.get(req.id, (0, 'green')) %}
+        <tr>
+          <td>{{ req.protocol }}</td>
+          <td><span class="pill {{ req.status.value }}">{{ req.status.value }}</span></td>
+          <td>{{ bases[req.base_id].name }}</td>
+          <td><span class="pill {{ sla_color }}">{{ (ratio*100)|round(0) }}%</span></td>
+          <td>{{ req.request_type }}</td>
+          <td>{{ req.quantity }}</td>
+          <td>
+            {% if user.role.value in ['base_supervisor','logistics_manager'] %}
+            <button
+              hx-get="/requests/{{ req.id }}/supervisor-panel?user_id={{ user.id }}"
+              hx-target="#supervisor-panel"
+              hx-swap="innerHTML"
+              type="button"
+            >
+              Abrir painel
+            </button>
+            {% endif %}
+            {% if user.role.value in ['base_supervisor','logistics_manager'] and req.status.value in ['submitted','triage'] %}
+            <details>
+              <summary>Analisar</summary>
+              <form method="post" action="/requests/{{ req.id }}/triage?user_id={{ user.id }}">
+                <select name="decision_type">
+                  <option value="confirm">confirm</option>
+                  <option value="partial">partial</option>
+                  <option value="alternative">alternative</option>
+                  <option value="refuse">refuse</option>
+                </select>
+                <input type="number" name="approved_quantity" value="{{ req.quantity }}" min="1" />
+                <input type="datetime-local" name="confirmed_datetime" />
+                <input name="confirmed_vehicle_type" value="{{ req.vehicle_type_requested }}" />
+                <input type="number" step="0.01" name="tariff_value" value="100" />
+                <input name="observations" placeholder="observações" />
+                <input name="refusal_reason" placeholder="motivo recusa" />
+                <button type="submit">Aplicar triagem</button>
+              </form>
+            </details>
+            {% endif %}
+
+            {% if user.role.value == 'partner_requester' and req.status.value == 'confirmed' %}
+            <form method="post" action="/requests/{{ req.id }}/otp?user_id={{ user.id }}"><button>Enviar OTP</button></form>
+            <form method="post" action="/requests/{{ req.id }}/accept?user_id={{ user.id }}">
+              <input name="otp_code" placeholder="OTP" required />
+              <button>Confirmar aceite</button>
+            </form>
+            {% endif %}
+
+            {% if user.role.value in ['base_supervisor','logistics_manager'] and req.status.value == 'in_execution' %}
+            <details>
+              <summary>Finalizar</summary>
+              <form method="post" action="/requests/{{ req.id }}/complete?user_id={{ user.id }}">
+                <input type="datetime-local" name="actual_departure_at" required />
+                <input type="datetime-local" name="actual_arrival_at" required />
+                <input name="occurrences" placeholder="ocorrências" />
+                <button type="submit">Encerrar viagem</button>
+              </form>
+            </details>
+            {% endif %}
+          </td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+
+{% if user.role.value in ['base_supervisor','logistics_manager'] %}
+<section id="supervisor-panel" class="surface-block">
+  {% include '_supervisor_panel.html' %}
+</section>
+{% endif %}
+
+{% if user.role.value in ['finance_readonly','logistics_manager'] %}
+<section class="inline-actions">
+  <h3>Financeiro</h3>
+  <a role="button" href="/finance?user_id={{ user.id }}">Abrir painel de faturamento</a>
+  <a role="button" href="/finance/billing.csv?user_id={{ user.id }}">Exportar CSV</a>
+</section>
+{% endif %}
+{% endblock %}

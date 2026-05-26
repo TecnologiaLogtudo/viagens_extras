@@ -1,0 +1,29 @@
+{% extends 'base.html' %}
+{% block content %}
+<section class="hero">
+  <h2>Empresa | Financeiro</h2>
+  <p>Viagens aptas para faturamento e exportação.</p>
+</section>
+
+<section class="panel">
+  <div class="inline-row">
+    <a class="button-like" href="/empresa/financeiro/billing.csv">Exportar CSV</a>
+  </div>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Protocolo</th><th>Empresa</th><th>Base</th><th>Status</th><th>Data solicitada</th></tr></thead>
+      <tbody>
+      {% for item in items %}
+      <tr>
+        <td>{{ item.protocol }}</td>
+        <td>{{ item.company_id }}</td>
+        <td>{{ item.base_id }}</td>
+        <td><span class="pill {{ item.status.value }}">{{ item.status.value }}</span></td>
+        <td>{{ item.requested_datetime }}</td>
+      </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endblock %}

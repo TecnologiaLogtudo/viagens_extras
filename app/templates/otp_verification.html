@@ -1,0 +1,96 @@
+{% extends 'base.html' %}
+{% block content %}
+<section class="hero">
+  <h2>Verificação OTP</h2>
+  <p>Protocolo {{ travel_request.protocol }}. Digite o código enviado por e-mail para confirmar o aceite.</p>
+</section>
+
+<section class="panel split">
+  <article class="card">
+    {% if error %}
+    <p class="error-text">{{ error }}</p>
+    {% endif %}
+    {% if message %}
+    <p class="pill green">{{ message }}</p>
+    {% endif %}
+
+    <form method="post" action="/partner/requests/{{ travel_request.id }}/accept" class="auth-form">
+      <label>Código OTP
+        <input name="otp_code" placeholder="000000" required />
+      </label>
+      <button type="submit">Validar e confirmar aceite</button>
+    </form>
+  </article>
+
+  <article class="card">
+    <h3>Validade do código</h3>
+    <p id="otp-countdown" class="pill yellow">05:00</p>
+    <p class="muted">Reenvios: <strong id="resend-count">{{ resend_count }}</strong>/{{ resend_limit }}</p>
+
+    <form method="post" action="/partner/requests/{{ travel_request.id }}/otp/resend" class="inline">
+      <button id="resend-btn" type="submit" disabled>Reenviar código</button>
+    </form>
+    <p id="resend-hint" class="muted">Aguarde a expiração para reenviar.</p>
+  </article>
+</section>
+
+<script>
+  (function () {
+    const countdownEl = document.getElementById("otp-countdown");
+    const resendBtn = document.getElementById("resend-btn");
+    const resendHint = document.getElementById("resend-hint");
+    const resendCountEl = document.getElementById("resend-count");
+
+    let remaining = Number("{{ remaining_seconds }}") || 0;
+    const resendLimit = Number("{{ resend_limit }}") || 3;
+    let resendCount = Number(resendCountEl.textContent) || 0;
+    const resendAvailableAt = Number("{{ resend_available_at_epoch }}") || 0;
+
+    function pad(n) {
+      return String(n).padStart(2, "0");
+    }
+
+    function updateCountdown() {
+      const minutes = Math.floor(remaining / 60);
+      const seconds = remaining % 60;
+      countdownEl.textContent = `${pad(minutes)}:${pad(seconds)}`;
+
+      countdownEl.classList.remove("green", "yellow", "red");
+      if (remaining <= 0) {
+        countdownEl.classList.add("red");
+      } else if (remaining < 60) {
+        countdownEl.classList.add("red");
+      } else {
+        countdownEl.classList.add("yellow");
+      }
+
+      if (remaining > 0) {
+        remaining -= 1;
+      }
+    }
+
+    function updateResendState() {
+      const nowEpoch = Math.floor(Date.now() / 1000);
+      const canResendByTime = remaining <= 0 && nowEpoch >= resendAvailableAt;
+      const canResendByCount = resendCount < resendLimit;
+      const canResend = canResendByTime && canResendByCount;
+
+      resendBtn.disabled = !canResend;
+      if (!canResendByCount) {
+        resendHint.textContent = "Limite de reenvios atingido.";
+      } else if (!canResendByTime) {
+        resendHint.textContent = "Aguarde a expiração para reenviar.";
+      } else {
+        resendHint.textContent = "Você já pode reenviar o código.";
+      }
+    }
+
+    updateCountdown();
+    updateResendState();
+    setInterval(function () {
+      updateCountdown();
+      updateResendState();
+    }, 1000);
+  })();
+</script>
+{% endblock %}

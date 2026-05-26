@@ -1,0 +1,32 @@
+{% extends 'base.html' %}
+{% block content %}
+<section class="view-head">
+  <p class="view-overline">Fechamento e cobrança</p>
+  <h2>Relatório de faturamento</h2>
+  <p>Conferência rápida de viagens aptas para faturar.</p>
+</section>
+
+<section class="surface-block">
+  <h3>Itens faturáveis</h3>
+  <div class="table-wrap">
+    <table class="data-table">
+      <thead><tr><th>Protocolo</th><th>Empresa</th><th>Base</th><th>Status</th><th>Data solicitada</th></tr></thead>
+      <tbody>
+      {% for item in items %}
+      <tr>
+        <td>{{ item.protocol }}</td>
+        <td>{{ item.company_id }}</td>
+        <td>{{ item.base_id }}</td>
+        <td><span class="pill {{ item.status.value }}">{{ item.status.value }}</span></td>
+        <td>{{ item.requested_datetime }}</td>
+      </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section class="inline-actions">
+  <a role="button" href="/?user_id={{ user.id }}">Voltar ao dashboard</a>
+</section>
+{% endblock %}

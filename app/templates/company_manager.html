@@ -1,0 +1,57 @@
+{% extends 'base.html' %}
+{% block content %}
+<section class="hero">
+  <h2>Empresa | Visão Gerencial</h2>
+  <p>Consolidação operacional e financeira.</p>
+</section>
+
+<section class="panel">
+  <div class="metrics">
+    <div><span>Abertos</span><strong>{{ counts.open }}</strong></div>
+    <div><span>Aguardando aceite</span><strong>{{ counts.pending_acceptance }}</strong></div>
+    <div><span>Em execução</span><strong>{{ counts.in_execution }}</strong></div>
+    <div><span>Concluídos</span><strong>{{ counts.completed }}</strong></div>
+  </div>
+</section>
+
+<section class="panel split">
+  <article class="card">
+    <h3>Pipeline operacional</h3>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Protocolo</th><th>Status</th><th>Base</th></tr></thead>
+        <tbody>
+        {% for req in travel_requests %}
+        <tr>
+          <td>{{ req.protocol }}</td>
+          <td><span class="pill {{ req.status.value }}">{{ req.status.value }}</span></td>
+          <td>{{ bases[req.base_id].name }}</td>
+        </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </article>
+
+  <article class="card">
+    <h3>Faturáveis</h3>
+    <div class="inline-row">
+      <a class="button-like" href="/empresa/financeiro/billing.csv">Exportar CSV</a>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Protocolo</th><th>Empresa</th><th>Base</th></tr></thead>
+        <tbody>
+        {% for item in items %}
+        <tr>
+          <td>{{ item.protocol }}</td>
+          <td>{{ item.company_id }}</td>
+          <td>{{ item.base_id }}</td>
+        </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </article>
+</section>
+{% endblock %}

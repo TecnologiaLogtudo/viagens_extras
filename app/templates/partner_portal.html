@@ -1,0 +1,95 @@
+{% extends 'base.html' %}
+{% block content %}
+<section class="hero">
+  <h2>Portal Parceiro</h2>
+  <p>Abra novas solicitações e acompanhe o status de ponta a ponta.</p>
+  {% if message %}
+  <p class="pill green">{{ message }}</p>
+  {% endif %}
+</section>
+
+<section class="panel split">
+  <article class="card">
+    <h3>Nova solicitação</h3>
+    <form class="form-grid" method="post" action="/partner/requests/new">
+      <label>Base
+        <select name="base_id" required>
+          {% for base in bases.values() %}
+          <option value="{{ base.id }}">{{ base.name }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label>Tipo
+        <input name="request_type" value="extra" required />
+      </label>
+      <label>Data/Hora
+        <input type="datetime-local" name="requested_datetime" required />
+      </label>
+      <label>Quantidade
+        <input type="number" min="1" name="quantity" required />
+      </label>
+      <label>Origem
+        <input name="origin" required />
+      </label>
+      <label>Destino
+        <input name="destination" required />
+      </label>
+      <label>Veículo desejado
+        <input name="vehicle_type_requested" value="sedan" required />
+      </label>
+      <label>Centro de custo
+        <input name="cost_center" />
+      </label>
+      <label>Motivo
+        <input name="reason" />
+      </label>
+      <label class="full">Notas
+        <textarea name="notes"></textarea>
+      </label>
+      <button class="full" type="submit">Registrar solicitação</button>
+    </form>
+  </article>
+
+  <article class="card">
+    <h3>Resumo</h3>
+    <div class="metrics">
+      <div><span>Abertos</span><strong>{{ counts.open }}</strong></div>
+      <div><span>Aguardando aceite</span><strong>{{ counts.pending_acceptance }}</strong></div>
+      <div><span>Em execução</span><strong>{{ counts.in_execution }}</strong></div>
+      <div><span>Concluídos</span><strong>{{ counts.completed }}</strong></div>
+    </div>
+  </article>
+</section>
+
+<section class="panel">
+  <h3>Minhas solicitações</h3>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr><th>Protocolo</th><th>Status</th><th>Base</th><th>SLA</th><th>Ações</th></tr>
+      </thead>
+      <tbody>
+      {% for req in travel_requests %}
+        {% set ratio, sla_color = sla_info.get(req.id, (0, 'green')) %}
+        <tr>
+          <td>{{ req.protocol }}</td>
+          <td><span class="pill {{ req.status.value }}">{{ req.status.value }}</span></td>
+          <td>{{ bases[req.base_id].name }}</td>
+          <td><span class="pill {{ sla_color }}">{{ (ratio*100)|round(0) }}%</span></td>
+          <td>
+            {% if req.status.value == 'confirmed' %}
+              <form method="post" action="/partner/requests/{{ req.id }}/otp" class="inline">
+                <button type="submit">Enviar OTP</button>
+              </form>
+              <a class="button-like" href="/partner/requests/{{ req.id }}/otp-verify">Verificar OTP</a>
+            {% else %}
+              <span class="muted">Sem ações</span>
+            {% endif %}
+          </td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endblock %}

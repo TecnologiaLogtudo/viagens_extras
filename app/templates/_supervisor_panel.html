@@ -1,0 +1,56 @@
+<section>
+  <h3>Painel de despacho</h3>
+  {% if not selected_request %}
+    <p class="muted">Selecione uma solicitação para carregar motoristas e veículos da base.</p>
+  {% else %}
+    <div class="selected-meta">
+      <span><strong>Protocolo:</strong> {{ selected_request.protocol }}</span>
+      <span><strong>Base:</strong> {{ selected_request.base_id }}</span>
+      <span><strong>Status:</strong> <span class="pill {{ selected_request.status.value }}">{{ selected_request.status.value }}</span></span>
+    </div>
+
+    <div class="driver-list">
+      {% for driver in drivers_for_selected %}
+      <div class="driver-row">
+        <div>
+          <strong>{{ driver.name }}</strong><br/>
+          <small>{{ driver.phone or "Sem telefone" }}</small>
+        </div>
+        <span class="pill status-{{ driver.activity_status.value }}">{{ driver.activity_status.value }}</span>
+      </div>
+      <div class="driver-actions">
+        {% if driver.phone %}
+        <a class="button-like" href="https://wa.me/{{ driver.phone | replace('+', '') | replace(' ', '') }}" target="_blank">Contato</a>
+        {% endif %}
+
+        <form method="post" action="/empresa/drivers/{{ driver.id }}/status">
+          {% if driver.activity_status.value == 'absent' %}
+          <input type="hidden" name="status" value="available" />
+          <button type="submit">Marcar disponível</button>
+          {% else %}
+          <input type="hidden" name="status" value="absent" />
+          <button type="submit" {% if driver.activity_status.value == 'in_route' %}disabled{% endif %}>Marcar ausente</button>
+          {% endif %}
+        </form>
+
+        {% if selected_request.status.value == 'accepted' %}
+        <form method="post" action="/empresa/requests/{{ selected_request.id }}/dispatch">
+          <label>Veículo
+            <select name="vehicle_id" required>
+              {% for v in vehicles_for_selected %}
+              <option value="{{ v.id }}">{{ v.plate }} ({{ v.vehicle_type }})</option>
+              {% endfor %}
+            </select>
+          </label>
+          <input type="hidden" name="driver_id" value="{{ driver.id }}" />
+          <label>Saída prevista
+            <input type="datetime-local" name="planned_departure_at" required />
+          </label>
+          <button type="submit" {% if driver.activity_status.value != 'available' %}disabled{% endif %}>Despachar</button>
+        </form>
+        {% endif %}
+      </div>
+      {% endfor %}
+    </div>
+  {% endif %}
+</section>
