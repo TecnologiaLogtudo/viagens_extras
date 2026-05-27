@@ -1,0 +1,21 @@
+<div id="manager-partners" class="table-wrap">
+  <table>
+    <thead>
+      <tr><th>Nome</th><th>Empresa</th><th>Telefone</th><th>Bases</th></tr>
+    </thead>
+    <tbody>
+      {% for p in partners %}
+      <tr>
+        <td>{{ p.full_name }}</td>
+        <td>{{ p.company_name }}</td>
+        <td>{{ p.phone or '-' }}</td>
+        <td>
+          {% for base_name in partner_base_names.get(p.id, []) %}
+          <span class="pill status-available">{{ base_name }}</span>
+          {% endfor %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>

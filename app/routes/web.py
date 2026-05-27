@@ -1,10 +1,12 @@
 import re
+import json
+import asyncio
 from datetime import timezone
 from urllib.parse import quote_plus
 from typing import List
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
-from fastapi.responses import HTMLResponse, RedirectResponse, Response
+from fastapi.responses import HTMLResponse, RedirectResponse, Response, StreamingResponse
 from fastapi.templating import Jinja2Templates
 from sqlmodel import Session, select, and_
 
@@ -20,7 +22,7 @@ from app.auth import (
     partner_only,
     supervisor_or_manager,
 )
-from app.db import get_session
+from app.db import engine, get_session
 from app.models import (
     Base,
     Company,
@@ -28,6 +30,7 @@ from app.models import (
     DecisionType,
     Driver,
     DriverActivityStatus,
+    EventLog,
     OTPChallenge,
     OperationalConfirmation,
     RequestStatus,
@@ -200,6 +203,103 @@ def _base_context(session: Session, user: User) -> dict:
         "can_access_finance": can_access_finance(user),
         "can_access_operations": can_access_operations(user),
     }
+
+
+def _manager_context(session: Session) -> dict:
+    bases = session.exec(select(Base).where(Base.active == True)).all()
+    companies = session.exec(select(Company).where(Company.active == True)).all()
+    supervisors = session.exec(select(User).where(User.role == UserRole.BASE_SUPERVISOR)).all()
+    partners = session.exec(select(User).where(User.role == UserRole.PARTNER_REQUESTER)).all()
+
+    supervisor_base_ids = {}
+    supervisor_company_names = {}
+    for sup in supervisors:
+        supervisor_base_ids[sup.id] = [b.id for b in sup.bases]
+        covered_company_ids = set()
+        for base in sup.bases:
+            links = session.exec(select(CompanyBase).where(CompanyBase.base_id == base.id)).all()
+            covered_company_ids.update(link.company_id for link in links)
+        names = []
+        for cid in covered_company_ids:
+            comp = session.get(Company, cid)
+            if comp:
+                names.append(comp.name)
+        supervisor_company_names[sup.id] = sorted(names)
+
+    partner_base_names = {}
+    for p in partners:
+        partner_base_names[p.id] = [b.name for b in p.bases]
+
+    company_base_info = session.exec(select(CompanyBase)).all()
+    return {
+        "bases": bases,
+        "companies": companies,
+        "supervisors": supervisors,
+        "partners": partners,
+        "supervisor_base_ids": supervisor_base_ids,
+        "supervisor_company_names": supervisor_company_names,
+        "partner_base_names": partner_base_names,
+        "company_base_info": company_base_info,
+    }
+
+
+def _request_visible_to_user(session: Session, request_id: int | None, user: User) -> bool:
+    if request_id is None:
+        return user.role == UserRole.LOGISTICS_MANAGER
+
+    req = session.get(TravelRequest, request_id)
+    if not req:
+        return False
+    if user.role == UserRole.LOGISTICS_MANAGER:
+        return True
+    if user.role == UserRole.PARTNER_REQUESTER:
+        return req.company_id == user.company_id
+    if user.role == UserRole.BASE_SUPERVISOR:
+        allowed_base_ids = {b.id for b in user.bases}
+        return req.base_id in allowed_base_ids
+    if user.role == UserRole.FINANCE_READONLY:
+        return req.status == RequestStatus.COMPLETED
+    return False
+
+
+def _event_matches_user(session: Session, event: EventLog, user: User) -> bool:
+    request_event_types = {
+        "request_changed",
+        "request_submitted",
+        "request_confirmed",
+        "request_refused",
+        "request_modified_by_partner",
+        "request_canceled",
+        "acceptance_signed",
+        "trip_dispatched",
+        "trip_completed",
+        "otp_sent",
+    }
+    if event.event_type == "manager_data_changed":
+        return user.role == UserRole.LOGISTICS_MANAGER
+    if event.event_type == "driver_status_changed":
+        if user.role not in (UserRole.BASE_SUPERVISOR, UserRole.LOGISTICS_MANAGER):
+            return False
+        if user.role == UserRole.LOGISTICS_MANAGER:
+            return True
+        if not event.request_id:
+            return False
+        req = session.get(TravelRequest, event.request_id)
+        if not req:
+            return False
+        allowed_base_ids = {b.id for b in user.bases}
+        return req.base_id in allowed_base_ids
+    if event.event_type in request_event_types:
+        return _request_visible_to_user(session, event.request_id, user)
+    return False
+
+
+def _sse_event_payload(event: EventLog) -> dict:
+    if event.event_type == "driver_status_changed":
+        return {"kind": "driver_status_changed", "request_id": event.request_id}
+    if event.event_type == "manager_data_changed":
+        return {"kind": "manager_data_changed"}
+    return {"kind": "request_changed", "request_id": event.request_id}
 
 
 @router.get("/", response_class=HTMLResponse)
@@ -432,15 +532,31 @@ def company_operations(
     if isinstance(user, RedirectResponse):
         return user
     ctx = _base_context(session, user)
+    selected_request = None
+    drivers_for_selected = []
+    vehicles_for_selected = []
+    selected_request_id = request.query_params.get("selected_request_id")
+    if selected_request_id and selected_request_id.isdigit():
+        req = session.get(TravelRequest, int(selected_request_id))
+        if req:
+            allowed_base_ids = {b.id for b in user.bases} if user.role == UserRole.BASE_SUPERVISOR else set()
+            if user.role != UserRole.BASE_SUPERVISOR or req.base_id in allowed_base_ids:
+                selected_request = req
+                drivers_for_selected = session.exec(
+                    select(Driver).where(Driver.base_id == req.base_id).order_by(Driver.name)
+                ).all()
+                vehicles_for_selected = session.exec(
+                    select(Vehicle).where(Vehicle.base_id == req.base_id).order_by(Vehicle.plate)
+                ).all()
     return templates.TemplateResponse(
         "company_operations.html",
         {
             "request": request,
             "user": user,
             **ctx,
-            "selected_request": None,
-            "drivers_for_selected": [],
-            "vehicles_for_selected": [],
+            "selected_request": selected_request,
+            "drivers_for_selected": drivers_for_selected,
+            "vehicles_for_selected": vehicles_for_selected,
             "title": "Empresa | Operações",
         },
     )
@@ -454,49 +570,14 @@ def company_manager(
     user = _require_roles_or_redirect(request, session, (UserRole.LOGISTICS_MANAGER,))
     if isinstance(user, RedirectResponse):
         return user
-    
-    bases = session.exec(select(Base).where(Base.active == True)).all()
-    companies = session.exec(select(Company).where(Company.active == True)).all()
-    
-    supervisors = session.exec(select(User).where(User.role == UserRole.BASE_SUPERVISOR)).all()
-    partners = session.exec(select(User).where(User.role == UserRole.PARTNER_REQUESTER)).all()
-    
-    # Get supervisor base links and covered companies derived from selected bases/contracts.
-    supervisor_base_ids = {}
-    supervisor_company_names = {}
-    for sup in supervisors:
-        supervisor_base_ids[sup.id] = [b.id for b in sup.bases]
-        covered_company_ids = set()
-        for base in sup.bases:
-            links = session.exec(select(CompanyBase).where(CompanyBase.base_id == base.id)).all()
-            covered_company_ids.update(link.company_id for link in links)
-        names = []
-        for cid in covered_company_ids:
-            comp = session.get(Company, cid)
-            if comp:
-                names.append(comp.name)
-        supervisor_company_names[sup.id] = sorted(names)
-
-    partner_base_names = {}
-    for p in partners:
-        partner_base_names[p.id] = [b.name for b in p.bases]
-
-    # Get partner company base links (SLA)
-    company_base_info = session.exec(select(CompanyBase)).all()
+    manager_ctx = _manager_context(session)
     
     return templates.TemplateResponse(
         "company_manager.html",
         {
             "request": request,
             "user": user,
-            "bases": bases,
-            "companies": companies,
-            "supervisors": supervisors,
-            "partners": partners,
-            "supervisor_base_ids": supervisor_base_ids,
-            "supervisor_company_names": supervisor_company_names,
-            "partner_base_names": partner_base_names,
-            "company_base_info": company_base_info,
+            **manager_ctx,
             "roles": UserRole,
             "title": "Empresa | Gerencial",
             "message": request.query_params.get("message"),
@@ -543,6 +624,7 @@ def register_supervisor(
             return _redirect("/empresa/gerencial?error=Base+invalida+selecionada")
         session.add(UserBaseLink(user_id=new_user.id, base_id=b_id))
         
+    session.add(EventLog(actor_user_id=user.id, event_type="manager_data_changed", payload="supervisor_created"))
     session.commit()
     return _redirect("/empresa/gerencial?message=Supervisor+cadastrado+com+sucesso")
 
@@ -612,6 +694,7 @@ def register_partner(
         else:
             session.add(CompanyBase(company_id=company.id, base_id=b_id, contract_sla_minutes=sla_minutes))
         
+    session.add(EventLog(actor_user_id=user.id, event_type="manager_data_changed", payload="partner_created_or_updated"))
     session.commit()
     if company_created:
         return _redirect("/empresa/gerencial?message=Parceiro+cadastrado+com+sucesso.+Empresa+criada+automaticamente+e+vinculos+de+base+atualizados.")
@@ -638,6 +721,188 @@ def company_finance(
             "title": "Empresa | Financeiro",
         },
     )
+
+
+@router.get("/partner/fragments/metrics", response_class=HTMLResponse)
+def partner_metrics_fragment(
+    request: Request,
+    session: Session = Depends(get_session),
+    user: User = Depends(partner_only),
+):
+    ctx = _base_context(session, user)
+    return templates.TemplateResponse(
+        "_partner_metrics.html",
+        {"request": request, "user": user, **ctx},
+    )
+
+
+@router.get("/partner/fragments/requests", response_class=HTMLResponse)
+def partner_requests_fragment(
+    request: Request,
+    session: Session = Depends(get_session),
+    user: User = Depends(partner_only),
+):
+    ctx = _base_context(session, user)
+    return templates.TemplateResponse(
+        "_partner_requests.html",
+        {"request": request, "user": user, **ctx},
+    )
+
+
+@router.get("/empresa/operacoes/fragments/metrics", response_class=HTMLResponse)
+def operations_metrics_fragment(
+    request: Request,
+    session: Session = Depends(get_session),
+    user: User = Depends(supervisor_or_manager),
+):
+    ctx = _base_context(session, user)
+    return templates.TemplateResponse(
+        "_operations_metrics.html",
+        {"request": request, "user": user, **ctx},
+    )
+
+
+@router.get("/empresa/operacoes/fragments/requests", response_class=HTMLResponse)
+def operations_requests_fragment(
+    request: Request,
+    session: Session = Depends(get_session),
+    user: User = Depends(supervisor_or_manager),
+):
+    ctx = _base_context(session, user)
+    return templates.TemplateResponse(
+        "_operations_requests.html",
+        {"request": request, "user": user, **ctx},
+    )
+
+
+@router.get("/empresa/operacoes/fragments/supervisor-panel", response_class=HTMLResponse)
+def operations_supervisor_panel_fragment(
+    request: Request,
+    selected_request_id: int | None = None,
+    session: Session = Depends(get_session),
+    user: User = Depends(supervisor_or_manager),
+):
+    if not selected_request_id:
+        return templates.TemplateResponse(
+            "_supervisor_panel.html",
+            {
+                "request": request,
+                "user": user,
+                "selected_request": None,
+                "selected_request_status_label": None,
+                "drivers_for_selected": [],
+                "vehicles_for_selected": [],
+                "driver_status": DriverActivityStatus,
+            },
+        )
+    req = session.get(TravelRequest, selected_request_id)
+    if not req:
+        raise HTTPException(status_code=404, detail="Pedido não encontrado")
+    allowed_base_ids = {b.id for b in user.bases} if user.role == UserRole.BASE_SUPERVISOR else set()
+    if user.role == UserRole.BASE_SUPERVISOR and req.base_id not in allowed_base_ids:
+        raise HTTPException(status_code=403, detail="Sem permissão para esta solicitação")
+    drivers = session.exec(select(Driver).where(Driver.base_id == req.base_id).order_by(Driver.name)).all()
+    vehicles = session.exec(select(Vehicle).where(Vehicle.base_id == req.base_id).order_by(Vehicle.plate)).all()
+    status_label = {
+        RequestStatus.TRIAGE: "Triagem",
+        RequestStatus.CONFIRMED: "Confirmado",
+        RequestStatus.ACCEPTED: "Aceito pelo parceiro",
+        RequestStatus.IN_EXECUTION: "Em execução (despachado)",
+        RequestStatus.COMPLETED: "Concluído",
+        RequestStatus.REFUSED: "Recusado",
+        RequestStatus.CANCELED: "Cancelado",
+    }.get(req.status, req.status.value)
+    return templates.TemplateResponse(
+        "_supervisor_panel.html",
+        {
+            "request": request,
+            "user": user,
+            "selected_request": req,
+            "selected_request_status_label": status_label,
+            "drivers_for_selected": drivers,
+            "vehicles_for_selected": vehicles,
+            "driver_status": DriverActivityStatus,
+        },
+    )
+
+
+@router.get("/empresa/gerencial/fragments/supervisors", response_class=HTMLResponse)
+def manager_supervisors_fragment(
+    request: Request,
+    session: Session = Depends(get_session),
+    user: User = Depends(finance_or_manager),
+):
+    if user.role != UserRole.LOGISTICS_MANAGER:
+        raise HTTPException(status_code=403, detail="Sem permissão")
+    ctx = _manager_context(session)
+    return templates.TemplateResponse(
+        "_manager_supervisors.html",
+        {"request": request, "user": user, **ctx},
+    )
+
+
+@router.get("/empresa/gerencial/fragments/partners", response_class=HTMLResponse)
+def manager_partners_fragment(
+    request: Request,
+    session: Session = Depends(get_session),
+    user: User = Depends(finance_or_manager),
+):
+    if user.role != UserRole.LOGISTICS_MANAGER:
+        raise HTTPException(status_code=403, detail="Sem permissão")
+    ctx = _manager_context(session)
+    return templates.TemplateResponse(
+        "_manager_partners.html",
+        {"request": request, "user": user, **ctx},
+    )
+
+
+@router.get("/empresa/gerencial/fragments/contracts", response_class=HTMLResponse)
+def manager_contracts_fragment(
+    request: Request,
+    session: Session = Depends(get_session),
+    user: User = Depends(finance_or_manager),
+):
+    if user.role != UserRole.LOGISTICS_MANAGER:
+        raise HTTPException(status_code=403, detail="Sem permissão")
+    ctx = _manager_context(session)
+    return templates.TemplateResponse(
+        "_manager_contracts.html",
+        {"request": request, "user": user, **ctx},
+    )
+
+
+@router.get("/events/stream")
+async def events_stream(
+    request: Request,
+    session: Session = Depends(get_session),
+):
+    user = get_optional_user(request, session)
+    if not user:
+        raise HTTPException(status_code=401, detail="Não autenticado")
+
+    last_id_header = request.headers.get("last-event-id")
+    last_event_id = int(last_id_header) if last_id_header and last_id_header.isdigit() else 0
+
+    async def event_generator():
+        nonlocal last_event_id
+        while True:
+            if await request.is_disconnected():
+                break
+
+            with Session(engine) as stream_session:
+                events = stream_session.exec(
+                    select(EventLog).where(EventLog.id > last_event_id).order_by(EventLog.id.asc())
+                ).all()
+                for event in events:
+                    if _event_matches_user(stream_session, event, user):
+                        payload = _sse_event_payload(event)
+                        yield f"id: {event.id}\nevent: {event.event_type}\ndata: {json.dumps(payload)}\n\n"
+                    last_event_id = max(last_event_id, event.id or 0)
+
+            yield ": heartbeat\n\n"
+            await asyncio.sleep(1)
+
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
 
 
 @router.get("/empresa/requests/{request_id}/supervisor-panel", response_class=HTMLResponse)
@@ -933,11 +1198,19 @@ def triage(
 
 @router.post("/empresa/drivers/{driver_id}/status")
 def change_driver_status(
+    request: Request,
     driver_id: int,
     status: DriverActivityStatus = Form(...),
     session: Session = Depends(get_session),
     user: User = Depends(supervisor_or_manager),
 ):
+    request_id = None
+    selected_request_id = request.query_params.get("selected_request_id")
+    if selected_request_id and selected_request_id.isdigit():
+        req = session.get(TravelRequest, int(selected_request_id))
+        if req:
+            request_id = req.id
+
     driver = session.get(Driver, driver_id)
     if not driver:
         raise HTTPException(status_code=404, detail="Motorista não encontrado")
@@ -950,8 +1223,19 @@ def change_driver_status(
     driver.activity_status = status
     driver.status_updated_at = now_utc()
     session.add(driver)
+    session.add(
+        EventLog(
+            request_id=request_id,
+            actor_user_id=user.id,
+            event_type="driver_status_changed",
+            payload=f"driver_id={driver.id}|status={status.value}",
+        )
+    )
     session.commit()
-    return _redirect("/empresa/operacoes")
+    redirect_url = "/empresa/operacoes"
+    if request_id:
+        redirect_url = f"/empresa/operacoes?selected_request_id={request_id}"
+    return _redirect(redirect_url)
 
 
 @router.post("/empresa/requests/{request_id}/dispatch")

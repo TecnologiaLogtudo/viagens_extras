@@ -5,7 +5,8 @@ from sqlmodel import Session, select
 
 from app.db import engine
 from app.main import app
-from app.models import Base, Company, CompanyBase, DecisionType, OperationalConfirmation, RequestStatus, UserBaseLink, TravelRequest, User
+from app.models import Base, Company, CompanyBase, DecisionType, EventLog, OperationalConfirmation, RequestStatus, UserBaseLink, TravelRequest, User
+from app.routes.web import _event_matches_user
 from app.services.workflow import DomainError
 
 
@@ -269,3 +270,73 @@ def test_supervisor_listing_shows_derived_companies(client: TestClient):
 
     page = client.get("/empresa/gerencial")
     assert "Empresa Coberta 2" in page.text
+
+
+def test_fragment_routes_require_and_render_expected_blocks(client: TestClient):
+    login(client, "parceiro@logtudo.local", "parceiro123")
+    partner_metrics = client.get("/partner/fragments/metrics")
+    partner_requests = client.get("/partner/fragments/requests")
+    assert partner_metrics.status_code == 200
+    assert "partner-metrics" in partner_metrics.text
+    assert partner_requests.status_code == 200
+    assert "partner-requests" in partner_requests.text
+
+    login(client, "gerente@logtudo.local", "gerente123")
+    op_metrics = client.get("/empresa/operacoes/fragments/metrics")
+    op_requests = client.get("/empresa/operacoes/fragments/requests")
+    assert op_metrics.status_code == 200
+    assert "operations-metrics" in op_metrics.text
+    assert op_requests.status_code == 200
+    assert "operations-requests" in op_requests.text
+
+    login(client, "gerente@logtudo.local", "gerente123")
+    mgr_sup = client.get("/empresa/gerencial/fragments/supervisors")
+    mgr_partners = client.get("/empresa/gerencial/fragments/partners")
+    mgr_contracts = client.get("/empresa/gerencial/fragments/contracts")
+    assert mgr_sup.status_code == 200
+    assert "manager-supervisors" in mgr_sup.text
+    assert mgr_partners.status_code == 200
+    assert "manager-partners" in mgr_partners.text
+    assert mgr_contracts.status_code == 200
+    assert "manager-contracts" in mgr_contracts.text
+
+
+def test_sse_requires_auth(client: TestClient):
+    client.post("/logout")
+    resp = client.get("/events/stream")
+    assert resp.status_code == 401
+
+
+def test_sse_event_filtering_logic_by_role():
+    with Session(engine) as session:
+        partner = session.exec(select(User).where(User.email == "parceiro@logtudo.local")).first()
+        manager = session.exec(select(User).where(User.email == "gerente@logtudo.local")).first()
+        base = session.exec(select(Base)).first()
+        company = session.get(Company, partner.company_id)
+        req = TravelRequest(
+            protocol=f"VX-SSE-{int(datetime.now(timezone.utc).timestamp())}",
+            company_id=company.id,
+            base_id=base.id,
+            requested_by_user_id=partner.id,
+            request_type="extra",
+            requested_datetime=datetime.now(timezone.utc),
+            origin="A",
+            destination="B",
+            quantity=1,
+            vehicle_type_requested="sedan",
+            cost_center="CC",
+            reason="teste",
+            status=RequestStatus.SUBMITTED,
+        )
+        session.add(req)
+        session.flush()
+        manager_event = EventLog(event_type="manager_data_changed", payload="test_mgr")
+        request_event = EventLog(request_id=req.id, event_type="request_changed", payload="test_request")
+        session.add(manager_event)
+        session.add(request_event)
+        session.commit()
+        session.refresh(manager_event)
+        session.refresh(request_event)
+        assert _event_matches_user(session, manager_event, manager) is True
+        assert _event_matches_user(session, manager_event, partner) is False
+        assert _event_matches_user(session, request_event, manager) is True

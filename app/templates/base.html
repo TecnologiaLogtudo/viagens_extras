@@ -46,5 +46,65 @@
 
     {% block content %}{% endblock %}
   </main>
+  <script>
+    (function () {
+      if (!window.EventSource || !window.htmx) return;
+
+      const role = "{{ user.role.value if user else '' }}";
+      const refreshTimers = {};
+      const activeSupervisorPanel = function () {
+        const panel = document.querySelector("#supervisor-panel [data-selected-request-id]");
+        return panel ? panel.getAttribute("data-selected-request-id") : "";
+      };
+
+      const queueRefresh = function (target, url) {
+        if (!document.querySelector(target)) return;
+        if (refreshTimers[target]) window.clearTimeout(refreshTimers[target]);
+        refreshTimers[target] = window.setTimeout(function () {
+          htmx.ajax("GET", url, { target: target, swap: "outerHTML" });
+        }, 350);
+      };
+
+      const onRequestChanged = function () {
+        if (role === "partner_requester") {
+          queueRefresh("#partner-metrics", "/partner/fragments/metrics");
+          queueRefresh("#partner-requests", "/partner/fragments/requests");
+          return;
+        }
+        if (role === "base_supervisor" || role === "logistics_manager") {
+          queueRefresh("#operations-metrics", "/empresa/operacoes/fragments/metrics");
+          queueRefresh("#operations-requests", "/empresa/operacoes/fragments/requests");
+          if (document.querySelector("#supervisor-panel")) {
+            const selectedId = activeSupervisorPanel();
+            const qs = selectedId ? "?selected_request_id=" + encodeURIComponent(selectedId) : "";
+            queueRefresh("#supervisor-panel", "/empresa/operacoes/fragments/supervisor-panel" + qs);
+          }
+        }
+      };
+
+      const onDriverChanged = function () {
+        if (role !== "base_supervisor" && role !== "logistics_manager") return;
+        queueRefresh("#operations-requests", "/empresa/operacoes/fragments/requests");
+        if (document.querySelector("#supervisor-panel")) {
+          const selectedId = activeSupervisorPanel();
+          const qs = selectedId ? "?selected_request_id=" + encodeURIComponent(selectedId) : "";
+          queueRefresh("#supervisor-panel", "/empresa/operacoes/fragments/supervisor-panel" + qs);
+        }
+      };
+
+      const onManagerChanged = function () {
+        if (role !== "logistics_manager") return;
+        queueRefresh("#manager-supervisors", "/empresa/gerencial/fragments/supervisors");
+        queueRefresh("#manager-partners", "/empresa/gerencial/fragments/partners");
+        queueRefresh("#manager-contracts", "/empresa/gerencial/fragments/contracts");
+      };
+
+      const stream = new EventSource("/events/stream");
+      stream.addEventListener("request_changed", onRequestChanged);
+      stream.addEventListener("driver_status_changed", onDriverChanged);
+      stream.addEventListener("manager_data_changed", onManagerChanged);
+      stream.onerror = function () {};
+    })();
+  </script>
 </body>
 </html>

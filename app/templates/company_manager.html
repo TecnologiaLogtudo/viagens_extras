@@ -31,31 +31,7 @@
     </form>
 
     <h3 style="margin-top: 2rem;">Supervisores Ativos</h3>
-    <div class="table-wrap">
-      <table>
-        <thead>
-          <tr><th>Nome</th><th>E-mail</th><th>Empresas Cobertas</th><th>Bases</th></tr>
-        </thead>
-        <tbody>
-          {% for sup in supervisors %}
-          <tr>
-            <td>{{ sup.full_name }}</td>
-            <td>{{ sup.email }}</td>
-            <td>
-              {% for company_name in supervisor_company_names.get(sup.id, []) %}
-              <span class="pill confirmed">{{ company_name }}</span>
-              {% endfor %}
-            </td>
-            <td>
-              {% for b in sup.bases %}
-              <span class="pill status-available">{{ b.name }}</span>
-              {% endfor %}
-            </td>
-          </tr>
-          {% endfor %}
-        </tbody>
-      </table>
-    </div>
+    {% include '_manager_supervisors.html' %}
   </section>
 
   <section class="panel">
@@ -90,51 +66,12 @@
     </form>
 
     <h3 style="margin-top: 2rem;">Parceiros Ativos</h3>
-    <div class="table-wrap">
-      <table>
-        <thead>
-          <tr><th>Nome</th><th>Empresa</th><th>Telefone</th><th>Bases</th></tr>
-        </thead>
-        <tbody>
-          {% for p in partners %}
-          <tr>
-            <td>{{ p.full_name }}</td>
-            <td>{{ p.company_name }}</td>
-            <td>{{ p.phone or '-' }}</td>
-            <td>
-              {% for base_name in partner_base_names.get(p.id, []) %}
-              <span class="pill status-available">{{ base_name }}</span>
-              {% endfor %}
-            </td>
-          </tr>
-          {% endfor %}
-        </tbody>
-      </table>
-    </div>
+    {% include '_manager_partners.html' %}
   </section>
 </div>
 
 <section class="panel" style="margin-top: 1rem;">
   <h3>Configuração de Contratos (SLA por Base)</h3>
-  <div class="table-wrap">
-    <table>
-      <thead>
-        <tr><th>Empresa</th><th>Base</th><th>SLA Acordado</th></tr>
-      </thead>
-      <tbody>
-        {% for cb in company_base_info %}
-        <tr>
-          <td>
-            {% for c in companies if c.id == cb.company_id %}{{ c.name }}{% endfor %}
-          </td>
-          <td>
-            {% for b in bases if b.id == cb.base_id %}{{ b.name }}{% endfor %}
-          </td>
-          <td>{{ cb.contract_sla_minutes }} min</td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
-  </div>
+  {% include '_manager_contracts.html' %}
 </section>
 {% endblock %}

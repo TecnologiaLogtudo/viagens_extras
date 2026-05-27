@@ -3,7 +3,7 @@
   {% if not selected_request %}
     <p class="muted">Selecione uma solicitação para carregar motoristas e veículos da base.</p>
   {% else %}
-    <div class="selected-meta">
+    <div class="selected-meta" data-selected-request-id="{{ selected_request.id }}">
       <span><strong>Protocolo:</strong> {{ selected_request.protocol }}</span>
       <span><strong>Base:</strong> {{ selected_request.base_id }}</span>
       <span><strong>Status:</strong> <span class="pill {{ selected_request.status.value }}">{{ selected_request_status_label or selected_request.status.value }}</span></span>
@@ -28,7 +28,7 @@
         <a class="button-like" href="https://wa.me/{{ driver.phone | replace('+', '') | replace(' ', '') }}" target="_blank">Contato</a>
         {% endif %}
 
-        <form method="post" action="/empresa/drivers/{{ driver.id }}/status">
+        <form method="post" action="/empresa/drivers/{{ driver.id }}/status?selected_request_id={{ selected_request.id }}">
           {% if driver.activity_status.value == 'absent' %}
           <input type="hidden" name="status" value="available" />
           <button type="submit">Marcar disponível</button>

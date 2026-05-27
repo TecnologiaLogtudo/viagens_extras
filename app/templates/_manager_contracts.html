@@ -1,0 +1,16 @@
+<div id="manager-contracts" class="table-wrap">
+  <table>
+    <thead>
+      <tr><th>Empresa</th><th>Base</th><th>SLA Acordado</th></tr>
+    </thead>
+    <tbody>
+      {% for cb in company_base_info %}
+      <tr>
+        <td>{% for c in companies if c.id == cb.company_id %}{{ c.name }}{% endfor %}</td>
+        <td>{% for b in bases if b.id == cb.base_id %}{{ b.name }}{% endfor %}</td>
+        <td>{{ cb.contract_sla_minutes }} min</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
