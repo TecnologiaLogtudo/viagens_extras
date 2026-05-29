@@ -58,7 +58,6 @@ from app.services.workflow import (
     propose_change,
     request_otp,
     resend_otp,
-    seed_data,
     sign_acceptance,
     triage_request,
 )
@@ -210,6 +209,18 @@ def _manager_context(session: Session) -> dict:
     companies = session.exec(select(Company).where(Company.active == True)).all()
     supervisors = session.exec(select(User).where(User.role == UserRole.BASE_SUPERVISOR)).all()
     partners = session.exec(select(User).where(User.role == UserRole.PARTNER_REQUESTER)).all()
+    company_base_links = session.exec(select(CompanyBase)).all()
+    base_by_id = {base.id: base for base in bases}
+    company_bases_by_company_id: dict[int, list[Base]] = {company.id: [] for company in companies}
+    company_base_meta_by_company_id: dict[int, list[dict]] = {company.id: [] for company in companies}
+    for link in company_base_links:
+        base = base_by_id.get(link.base_id)
+        if not base:
+            continue
+        company_bases_by_company_id.setdefault(link.company_id, []).append(base)
+        company_base_meta_by_company_id.setdefault(link.company_id, []).append(
+            {"base": base, "contract_sla_minutes": link.contract_sla_minutes}
+        )
 
     supervisor_base_ids = {}
     supervisor_company_names = {}
@@ -234,6 +245,9 @@ def _manager_context(session: Session) -> dict:
     return {
         "bases": bases,
         "companies": companies,
+        "company_base_links": company_base_links,
+        "company_bases_by_company_id": company_bases_by_company_id,
+        "company_base_meta_by_company_id": company_base_meta_by_company_id,
         "supervisors": supervisors,
         "partners": partners,
         "supervisor_base_ids": supervisor_base_ids,
@@ -304,7 +318,6 @@ def _sse_event_payload(event: EventLog) -> dict:
 
 @router.get("/", response_class=HTMLResponse)
 def home(request: Request, session: Session = Depends(get_session)):
-    seed_data(session)
     user = get_optional_user(request, session)
     if not user:
         return _redirect("/login")
@@ -313,7 +326,6 @@ def home(request: Request, session: Session = Depends(get_session)):
 
 @router.get("/login", response_class=HTMLResponse)
 def login_page(request: Request, session: Session = Depends(get_session)):
-    seed_data(session)
     user = get_optional_user(request, session)
     if user:
         return _redirect(_role_home(user))
@@ -629,6 +641,7 @@ def register_supervisor(
     request: Request,
     full_name: str = Form(...),
     email: str = Form(...),
+    phone: str = Form(default=""),
     password: str = Form(...),
     base_ids: List[int] = Form(...),
     supervisor_id: int | None = Form(None),
@@ -642,6 +655,8 @@ def register_supervisor(
         return _redirect("/empresa/gerencial?error=Selecione+ao+menos+uma+base+para+o+supervisor")
 
     normalized_email = email.strip().lower()
+    phone_digits = re.sub(r"\D", "", phone.strip())
+    normalized_phone = _format_phone_br(phone_digits) if phone_digits else None
     existing = session.exec(select(User).where(User.email == normalized_email)).first()
     if existing and (supervisor_id is None or existing.id != supervisor_id):
         return _redirect("/empresa/gerencial?error=Email+já+cadastrado")
@@ -653,6 +668,7 @@ def register_supervisor(
             return _redirect("/empresa/gerencial?error=Supervisor+invalido")
         supervisor.full_name = full_name
         supervisor.email = normalized_email
+        supervisor.phone = normalized_phone
         if password:
             supervisor.password_hash = hash_password(password)
         session.exec(delete(UserBaseLink).where(UserBaseLink.user_id == supervisor.id))
@@ -668,6 +684,7 @@ def register_supervisor(
     new_user = User(
         full_name=full_name,
         email=normalized_email,
+        phone=normalized_phone,
         role=UserRole.BASE_SUPERVISOR,
         password_hash=hash_password(password),
         is_active=True

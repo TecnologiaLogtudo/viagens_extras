@@ -6,7 +6,10 @@
   <input type="email" name="email" required value="{{ values.get('email', '') }}" placeholder="usuario@empresa.com" />
 </label>
 <label>Senha*
-  <input type="password" name="password" required minlength="8" />
+  <div class="password-wrapper">
+    <input type="password" name="password" required minlength="8" />
+    <button type="button" class="password-toggle" aria-label="Mostrar senha"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg></button>
+  </div>
 </label>
 <label>Empresa*
   <input name="company_name" required value="{{ values.get('company_name', '') }}" />

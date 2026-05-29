@@ -36,7 +36,10 @@
           <input type="email" name="email" required placeholder="usuario@logtudo.local" />
         </label>
         <label>Senha
-          <input type="password" name="password" required />
+          <div class="password-wrapper">
+            <input type="password" name="password" required />
+            <button type="button" class="password-toggle" aria-label="Mostrar senha"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg></button>
+          </div>
         </label>
         <button type="submit">Entrar</button>
       </form>
@@ -44,15 +47,25 @@
       <p class="muted">Não tem conta? <a href="/signup">Cadastre-se</a></p>
 
       <div class="hint-box">
-        <strong>Credenciais teste:</strong>
-        <ul>
-          <li>Parceiro: parceiro@logtudo.local / parceiro123</li>
-          <li>Supervisor: supervisor@logtudo.local / supervisor123</li>
-          <li>Gerente: gerente@logtudo.local / gerente123</li>
-          <li>Financeiro: financeiro@logtudo.local / financeiro123</li>
-        </ul>
+        <strong>Acesso:</strong>
+        <p style="margin: 0.35rem 0 0;">Use suas credenciais cadastradas para entrar no sistema.</p>
       </div>
     </section>
   </main>
+  <script>
+    document.addEventListener("click", function(e) {
+      const btn = e.target.closest(".password-toggle");
+      if (!btn) return;
+      e.preventDefault();
+      const input = btn.previousElementSibling;
+      if (input && input.tagName === 'INPUT') {
+        const isPass = input.type === 'password';
+        input.type = isPass ? 'text' : 'password';
+        btn.innerHTML = isPass 
+          ? '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"></path><line x1="1" y1="1" x2="23" y2="23"></line></svg>'
+          : '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>';
+      }
+    });
+  </script>
 </body>
 </html>

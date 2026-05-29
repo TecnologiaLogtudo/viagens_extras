@@ -14,22 +14,67 @@
       {% if edit_supervisor %}
       <input type="hidden" name="supervisor_id" value="{{ edit_supervisor.id }}" />
       {% endif %}
-      <label class="full">Nome Completo
+      <label>Nome Completo
         <input name="full_name" value="{{ edit_supervisor.full_name if edit_supervisor else '' }}" required />
+      </label>
+      <label>Telefone
+        <input name="phone" value="{{ edit_supervisor.phone if edit_supervisor else '' }}" placeholder="71 99876-5213" />
       </label>
       <label>E-mail
         <input type="email" name="email" value="{{ edit_supervisor.email if edit_supervisor else '' }}" required />
       </label>
       <label>Senha Provisória
-        <input type="password" name="password" {% if not edit_supervisor %}required{% endif %} />
+        <div class="password-wrapper">
+          <input type="password" name="password" {% if not edit_supervisor %}required{% endif %} />
+          <button type="button" class="password-toggle" aria-label="Mostrar senha"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg></button>
+        </div>
       </label>
-      <label class="full">Bases sob controle (Segure Ctrl para selecionar várias)
-        <select name="base_ids" multiple required style="min-height: 100px;">
-          {% for b in bases %}
-          <option value="{{ b.id }}"{% if b.id in edit_supervisor_base_ids %} selected{% endif %}>{{ b.name }} ({{ b.location }})</option>
+      <fieldset class="full grouped-select">
+        <legend>Bases sob controle</legend>
+        <p class="muted" style="margin: 0 0 0.5rem 0;">Selecione a empresa e marque as bases que este supervisor poderá operar.</p>
+        {% if companies %}
+        <div class="company-tree">
+          {% for company in companies %}
+          {% set company_bases = company_bases_by_company_id.get(company.id, []) %}
+          <details class="company-group">
+            <summary>
+              <strong>{{ company.name }}</strong>
+              <span class="group-count">{{ company_bases|length }} base{{ '' if company_bases|length == 1 else 's' }}</span>
+            </summary>
+            {% if company_bases %}
+            <label class="company-toggle">
+              <input type="checkbox" class="company-toggle-input" data-company-toggle="{{ company.id }}" />
+              <span>Selecionar todas as bases desta empresa</span>
+            </label>
+            {% endif %}
+            <div class="company-bases">
+              {% if company_bases %}
+                {% for base in company_bases %}
+                <label class="base-choice">
+                  <input
+                    type="checkbox"
+                    name="base_ids"
+                    value="{{ base.id }}"
+                    data-company-id="{{ company.id }}"
+                    {% if base.id in edit_supervisor_base_ids %}checked{% endif %}
+                  />
+                  <span class="base-choice-text">
+                    <strong>{{ base.name }}</strong>
+                    <span>{{ base.location or 'Local não informado' }}</span>
+                  </span>
+                </label>
+                {% endfor %}
+              {% else %}
+                <p class="muted" style="margin: 0;">Nenhuma base vinculada a esta empresa.</p>
+              {% endif %}
+            </div>
+          </details>
           {% endfor %}
-        </select>
-      </label>
+        </div>
+        {% else %}
+        <p class="muted" style="margin: 0;">Nenhuma empresa cadastrada.</p>
+        {% endif %}
+      </fieldset>
       <button class="full" type="submit">{{ "Salvar alterações" if edit_supervisor else "Cadastrar Supervisor" }}</button>
       {% if edit_supervisor %}
       <a class="pill" href="/empresa/gerencial">Cancelar edição</a>
@@ -53,7 +98,10 @@
         <input type="email" name="email" value="{{ edit_partner.email if edit_partner else '' }}" required />
       </label>
       <label>Senha Provisória
-        <input type="password" name="password" {% if not edit_partner %}required{% endif %} />
+        <div class="password-wrapper">
+          <input type="password" name="password" {% if not edit_partner %}required{% endif %} />
+          <button type="button" class="password-toggle" aria-label="Mostrar senha"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg></button>
+        </div>
       </label>
       <label>Telefone
         <input name="phone" value="{{ edit_partner.phone if edit_partner else '' }}" placeholder="71 99876-5213" />
@@ -141,4 +189,51 @@
     </div>
   </section>
 </div>
+
+<script>
+  (function () {
+    const groups = document.querySelectorAll(".company-group");
+    if (!groups.length) return;
+
+    const updateCompanyState = function (group) {
+      const companyId = group.dataset.companyId;
+      const children = group.querySelectorAll(`input[type="checkbox"][name="base_ids"][data-company-id="${companyId}"]`);
+      const master = group.querySelector(`input[type="checkbox"][data-company-toggle="${companyId}"]`);
+      if (!master) return;
+
+      const checkedCount = Array.from(children).filter(function (checkbox) {
+        return checkbox.checked;
+      }).length;
+
+      master.checked = checkedCount > 0 && checkedCount === children.length;
+      master.indeterminate = checkedCount > 0 && checkedCount < children.length;
+      master.setAttribute("aria-checked", master.indeterminate ? "mixed" : String(master.checked));
+    };
+
+    groups.forEach(function (group) {
+      const companyId = group.querySelector("[data-company-toggle]")?.dataset.companyToggle;
+      if (!companyId) return;
+      group.dataset.companyId = companyId;
+
+      const master = group.querySelector(`input[type="checkbox"][data-company-toggle="${companyId}"]`);
+      const children = group.querySelectorAll(`input[type="checkbox"][name="base_ids"][data-company-id="${companyId}"]`);
+
+      master?.addEventListener("change", function () {
+        children.forEach(function (checkbox) {
+          checkbox.checked = master.checked;
+        });
+        master.indeterminate = false;
+        master.setAttribute("aria-checked", String(master.checked));
+      });
+
+      children.forEach(function (checkbox) {
+        checkbox.addEventListener("change", function () {
+          updateCompanyState(group);
+        });
+      });
+
+      updateCompanyState(group);
+    });
+  })();
+</script>
 {% endblock %}

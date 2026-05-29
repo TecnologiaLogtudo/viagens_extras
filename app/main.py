@@ -1,5 +1,3 @@
-from pathlib import Path
-
 from fastapi import FastAPI, Response
 from fastapi.staticfiles import StaticFiles
 from dotenv import load_dotenv
@@ -8,8 +6,7 @@ from sqlmodel import Session
 
 from app.db import engine, init_db
 from app.routes.web import router as web_router
-from app.services.fleet_import import import_fleet_from_excel
-from app.services.workflow import seed_data
+from app.services.bootstrap import seed_runtime_data
 
 load_dotenv()
 
@@ -28,10 +25,7 @@ app.include_router(web_router)
 def on_startup():
     init_db()
     with Session(engine) as session:
-        seed_data(session)
-        xlsx_path = "cadastro_veiculos_tratado.xlsx"
-        if Path(xlsx_path).exists():
-            import_fleet_from_excel(session, xlsx_path)
+        seed_runtime_data(session)
 
 
 @app.get("/health")

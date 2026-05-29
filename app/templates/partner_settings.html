@@ -31,10 +31,16 @@
         <input name="job_title" value="{{ user.job_title or '' }}" />
       </label>
       <label>Nova senha
-        <input type="password" name="new_password" minlength="8" placeholder="Opcional" />
+        <div class="password-wrapper">
+          <input type="password" name="new_password" minlength="8" placeholder="Opcional" />
+          <button type="button" class="password-toggle" aria-label="Mostrar senha"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg></button>
+        </div>
       </label>
       <label>Confirmar nova senha
-        <input type="password" name="confirm_password" minlength="8" placeholder="Repita a nova senha" />
+        <div class="password-wrapper">
+          <input type="password" name="confirm_password" minlength="8" placeholder="Repita a nova senha" />
+          <button type="button" class="password-toggle" aria-label="Mostrar senha"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg></button>
+        </div>
       </label>
       <div class="full inline-row">
         <button type="submit">Salvar alterações</button>

@@ -10,12 +10,6 @@ from app.routes.web import _event_matches_user
 from app.services.workflow import DomainError
 
 
-@pytest.fixture()
-def client():
-    with TestClient(app) as test_client:
-        yield test_client
-
-
 def login(client: TestClient, email: str, password: str):
     return client.post("/login", data={"email": email, "password": password}, follow_redirects=False)
 
@@ -212,8 +206,11 @@ def test_manager_register_partner_with_new_company_and_multiple_bases(client: Te
 def test_manager_register_partner_reuses_existing_company(client: TestClient):
     login(client, "gerente@logtudo.local", "gerente123")
     with Session(engine) as session:
-        company = session.exec(select(Company).where(Company.name == "Parceiro Exemplo")).first()
-        count_before = len(session.exec(select(Company).where(Company.name == "Parceiro Exemplo")).all())
+        partner = session.exec(select(User).where(User.email == "parceiro@logtudo.local")).first()
+        assert partner is not None
+        company = session.get(Company, partner.company_id)
+        assert company is not None
+        count_before = len(session.exec(select(Company).where(Company.name == company.name)).all())
         base = session.exec(select(Base)).first()
 
     resp = client.post(
@@ -222,7 +219,7 @@ def test_manager_register_partner_reuses_existing_company(client: TestClient):
             "full_name": "Parceiro Reuso",
             "email": f"reuso-{int(datetime.now(timezone.utc).timestamp())}@test.local",
             "password": "senha1234",
-            "company_name": "Parceiro Exemplo",
+            "company_name": company.name,
             "phone": "71988776655",
             "base_ids": [base.id],
             "sla_minutes": 30,
@@ -232,7 +229,7 @@ def test_manager_register_partner_reuses_existing_company(client: TestClient):
     assert resp.status_code == 303
 
     with Session(engine) as session:
-        count_after = len(session.exec(select(Company).where(Company.name == "Parceiro Exemplo")).all())
+        count_after = len(session.exec(select(Company).where(Company.name == company.name)).all())
         assert count_after == count_before
         partner = session.exec(select(User).where(User.email.like("reuso-%@test.local")).order_by(User.id.desc())).first()
         assert partner is not None
@@ -242,16 +239,10 @@ def test_manager_register_partner_reuses_existing_company(client: TestClient):
 def test_supervisor_listing_shows_derived_companies(client: TestClient):
     login(client, "gerente@logtudo.local", "gerente123")
     with Session(engine) as session:
-        base1 = session.exec(select(Base)).first()
-        base2 = Base(name="Base Camaçari", location="Camaçari", sla_minutes=30, min_advance_minutes=60)
-        company2 = Company(name="Empresa Coberta 2", cnpj="22.222.222/0001-22")
-        session.add(base2)
-        session.add(company2)
-        session.commit()
-        session.refresh(base2)
-        session.refresh(company2)
-        session.add(CompanyBase(company_id=company2.id, base_id=base2.id, contract_sla_minutes=30))
-        session.commit()
+        base1 = session.exec(select(Base).where(Base.name == "BA")).first()
+        base2 = session.exec(select(Base).where(Base.name == "PE")).first()
+        assert base1 is not None
+        assert base2 is not None
         base1_id = base1.id
         base2_id = base2.id
 
@@ -261,6 +252,7 @@ def test_supervisor_listing_shows_derived_companies(client: TestClient):
         data={
             "full_name": "Supervisor Multi",
             "email": email,
+            "phone": "71998765213",
             "password": "senha1234",
             "base_ids": [base1_id, base2_id],
         },
@@ -269,7 +261,24 @@ def test_supervisor_listing_shows_derived_companies(client: TestClient):
     assert resp.status_code == 303
 
     page = client.get("/empresa/gerencial")
-    assert "Empresa Coberta 2" in page.text
+    assert "Danone" in page.text
+    assert "Lactalis" in page.text
+    assert base1.name in page.text
+    assert 'class="company-group"' in page.text
+    assert 'name="base_ids"' in page.text
+
+    with Session(engine) as session:
+        created = session.exec(select(User).where(User.email == email)).first()
+        assert created is not None
+        assert created.phone == "71 99876-5213"
+
+    edit_page = client.get(f"/empresa/gerencial?edit_supervisor_id={created.id}")
+    page_text = edit_page.text
+    for base_id in (base1_id, base2_id):
+        marker = f'value="{base_id}"'
+        marker_index = page_text.find(marker)
+        assert marker_index != -1
+        assert "checked" in page_text[marker_index:marker_index + 180]
 
 
 def test_fragment_routes_require_and_render_expected_blocks(client: TestClient):
