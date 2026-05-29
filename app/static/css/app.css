@@ -414,6 +414,29 @@ th, td {
   word-break: break-word;
 }
 
+#manager-supervisors th:first-child,
+#manager-supervisors td:first-child {
+  min-width: 80px;
+  white-space: nowrap;
+  overflow-wrap: normal;
+  word-break: normal;
+}
+
+#manager-supervisors th:nth-child(2),
+#manager-supervisors td:nth-child(2) {
+  min-width: 80px; /* Altere este valor para a largura desejada */
+}
+
+#manager-supervisors th:nth-child(3),
+#manager-supervisors td:nth-child(3) {
+  min-width: 150px; /* Altere este valor para a largura desejada */
+}
+
+#manager-supervisors th:nth-child(4),
+#manager-supervisors td:nth-child(4) {
+  min-width: 80px; /* Altere este valor para a largura desejada */
+}
+
 th {
   text-transform: uppercase;
   font-size: 0.7rem;

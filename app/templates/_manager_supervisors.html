@@ -1,13 +1,12 @@
 <div id="manager-supervisors" class="table-wrap">
   <table>
     <thead>
-      <tr><th>Nome</th><th>E-mail</th><th>Empresas Cobertas</th><th>Bases</th><th>Ações</th></tr>
+      <tr><th>Nome</th><th>Empresas Cobertas</th><th>Bases</th><th>Ações</th></tr>
     </thead>
     <tbody>
       {% for sup in supervisors %}
       <tr>
         <td>{{ sup.full_name }}</td>
-        <td>{{ sup.email }}</td>
         <td>
           {% for company_name in supervisor_company_names.get(sup.id, []) %}
           <span class="pill confirmed">{{ company_name }}</span>
