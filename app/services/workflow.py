@@ -712,6 +712,46 @@ def seed_data(session: Session) -> None:
         if changed:
             session.commit()
         ensure_partner_all_bases()
+
+        # Ensure default managerial users exist even when the DB is not empty
+        # This helps test environments where some users were created but others are missing.
+        def ensure_user_by_email(email: str, role: UserRole, defaults: dict):
+            u = session.exec(select(User).where(User.email == email)).first()
+            if not u:
+                new = User(email=email, role=role, full_name=defaults.get("full_name", email), company_name=defaults.get("company_name", "Logtudo"), password_hash=hash_password(default_password_by_role.get(role, "logtudo123")))
+                # attach optional base_id if provided
+                if "base_id" in defaults and defaults["base_id"]:
+                    new.base_id = defaults["base_id"]
+                session.add(new)
+                session.flush()
+                # if supervisor and base link model is used, add UserBaseLink
+                if role == UserRole.BASE_SUPERVISOR and "base_id" in defaults and defaults["base_id"]:
+                    session.add(UserBaseLink(user_id=new.id, base_id=defaults["base_id"]))
+
+        # pick an existing base if available to attach the supervisor
+        first_base = session.exec(select(Base)).first()
+        ensure_user_by_email(
+            "parceiro@logtudo.local",
+            UserRole.PARTNER_REQUESTER,
+            {"full_name": "Ana Parceira", "company_name": "Parceiro Exemplo"},
+        )
+        ensure_user_by_email(
+            "supervisor@logtudo.local",
+            UserRole.BASE_SUPERVISOR,
+            {"full_name": "Bruno Supervisor", "company_name": "Logtudo", "base_id": first_base.id if first_base else None},
+        )
+        ensure_user_by_email(
+            "gerente@logtudo.local",
+            UserRole.LOGISTICS_MANAGER,
+            {"full_name": "Carla Gerente", "company_name": "Logtudo"},
+        )
+        ensure_user_by_email(
+            "financeiro@logtudo.local",
+            UserRole.FINANCE_READONLY,
+            {"full_name": "Diego Financeiro", "company_name": "Logtudo"},
+        )
+
+        session.commit()
         return
 
     company = Company(name="Parceiro Exemplo", cnpj="12.345.678/0001-90")

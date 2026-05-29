@@ -10,17 +10,18 @@
   <link rel="stylesheet" href="/static/css/app.css" />
   <style>
     body {
-      background: url('/static/imagens/texturas_Prancheta 1-02.png');
-      background-size: cover;
+      background: url('/static/imagens/textura2.png');
+      background-size: contain;
       background-attachment: fixed;
     }
   </style>
 </head>
 <body>
-  <div class="bg-glow"></div>
+  <div class="bg-glow bg-grayscale"></div>
   <main class="auth-shell">
     <section class="auth-card">
       <p class="kicker">Acesso restrito</p>
+      <img src="/static/imagens/Logo02.png" alt="Logtudo" class="auth-logo">
       <h1>Central de Viagens Extras</h1>
 
       {% if error %}
@@ -43,7 +44,7 @@
       <p class="muted">Não tem conta? <a href="/signup">Cadastre-se</a></p>
 
       <div class="hint-box">
-        <strong>Credenciais seed:</strong>
+        <strong>Credenciais teste:</strong>
         <ul>
           <li>Parceiro: parceiro@logtudo.local / parceiro123</li>
           <li>Supervisor: supervisor@logtudo.local / supervisor123</li>

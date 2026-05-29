@@ -1,7 +1,7 @@
 <div id="manager-supervisors" class="table-wrap">
   <table>
     <thead>
-      <tr><th>Nome</th><th>E-mail</th><th>Empresas Cobertas</th><th>Bases</th></tr>
+      <tr><th>Nome</th><th>E-mail</th><th>Empresas Cobertas</th><th>Bases</th><th>Ações</th></tr>
     </thead>
     <tbody>
       {% for sup in supervisors %}
@@ -17,6 +17,12 @@
           {% for b in sup.bases %}
           <span class="pill status-available">{{ b.name }}</span>
           {% endfor %}
+        </td>
+        <td>
+          <a class="pill" href="/empresa/gerencial?edit_supervisor_id={{ sup.id }}">Editar</a>
+          <form method="post" action="/empresa/gerencial/supervisors/{{ sup.id }}/delete" style="display:inline;margin-left:0.5rem;">
+            <button type="submit" class="pill red" data-confirm="Deletar esse supervisor?">Excluir</button>
+          </form>
         </td>
       </tr>
       {% endfor %}

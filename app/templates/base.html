@@ -46,6 +46,17 @@
 
     {% block content %}{% endblock %}
   </main>
+
+  <div id="system-confirm-overlay" class="system-confirm hidden" aria-hidden="true" role="dialog" aria-modal="true">
+    <div class="system-confirm-dialog">
+      <p id="system-confirm-message"></p>
+      <div class="system-confirm-actions">
+        <button type="button" id="system-confirm-cancel">Cancelar</button>
+        <button type="button" id="system-confirm-ok">Confirmar</button>
+      </div>
+    </div>
+  </div>
+
   <script>
     (function () {
       if (!window.EventSource || !window.htmx) return;
@@ -96,7 +107,8 @@
         if (role !== "logistics_manager") return;
         queueRefresh("#manager-supervisors", "/empresa/gerencial/fragments/supervisors");
         queueRefresh("#manager-partners", "/empresa/gerencial/fragments/partners");
-        queueRefresh("#manager-contracts", "/empresa/gerencial/fragments/contracts");
+        queueRefresh("#manager-bases", "/empresa/gerencial/fragments/bases");
+        queueRefresh("#manager-companies", "/empresa/gerencial/fragments/companies");
       };
 
       const stream = new EventSource("/events/stream");
@@ -104,6 +116,52 @@
       stream.addEventListener("driver_status_changed", onDriverChanged);
       stream.addEventListener("manager_data_changed", onManagerChanged);
       stream.onerror = function () {};
+
+      // Scroll restoration for edits/deletes
+      window.addEventListener("beforeunload", function () {
+        sessionStorage.setItem("scrollPos", window.scrollY);
+      });
+      const scrollPos = sessionStorage.getItem("scrollPos");
+      if (scrollPos) {
+        window.scrollTo(0, parseInt(scrollPos));
+        sessionStorage.removeItem("scrollPos");
+      }
+
+      const confirmOverlay = document.getElementById("system-confirm-overlay");
+      const confirmMessage = document.getElementById("system-confirm-message");
+      const confirmCancel = document.getElementById("system-confirm-cancel");
+      const confirmOk = document.getElementById("system-confirm-ok");
+      let confirmTarget = null;
+
+      const hideConfirm = function () {
+        confirmOverlay.classList.add("hidden");
+        confirmOverlay.setAttribute("aria-hidden", "true");
+        confirmTarget = null;
+      };
+
+      document.addEventListener("click", function (event) {
+        const button = event.target.closest("[data-confirm]");
+        if (!button) return;
+        event.preventDefault();
+        confirmTarget = button;
+        confirmMessage.textContent = button.dataset.confirm;
+        confirmOverlay.classList.remove("hidden");
+        confirmOverlay.setAttribute("aria-hidden", "false");
+      });
+
+      confirmCancel.addEventListener("click", hideConfirm);
+      confirmOverlay.addEventListener("click", function (event) {
+        if (event.target === confirmOverlay) hideConfirm();
+      });
+      window.addEventListener("keydown", function (event) {
+        if (event.key === "Escape" && confirmTarget) hideConfirm();
+      });
+      confirmOk.addEventListener("click", function () {
+        if (!confirmTarget) return hideConfirm();
+        const form = confirmTarget.closest("form");
+        hideConfirm();
+        if (form) form.submit();
+      });
     })();
   </script>
 </body>

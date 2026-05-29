@@ -9,25 +9,31 @@
 
 <div class="split">
   <section class="panel">
-    <h3>Cadastro de Supervisor</h3>
+    <h3>{{ "Editar Supervisor" if edit_supervisor else "Cadastro de Supervisor" }}</h3>
     <form class="form-grid" method="post" action="/empresa/gerencial/supervisors/new">
+      {% if edit_supervisor %}
+      <input type="hidden" name="supervisor_id" value="{{ edit_supervisor.id }}" />
+      {% endif %}
       <label class="full">Nome Completo
-        <input name="full_name" required />
+        <input name="full_name" value="{{ edit_supervisor.full_name if edit_supervisor else '' }}" required />
       </label>
       <label>E-mail
-        <input type="email" name="email" required />
+        <input type="email" name="email" value="{{ edit_supervisor.email if edit_supervisor else '' }}" required />
       </label>
       <label>Senha Provisória
-        <input type="password" name="password" required />
+        <input type="password" name="password" {% if not edit_supervisor %}required{% endif %} />
       </label>
       <label class="full">Bases sob controle (Segure Ctrl para selecionar várias)
         <select name="base_ids" multiple required style="min-height: 100px;">
           {% for b in bases %}
-          <option value="{{ b.id }}">{{ b.name }} ({{ b.location }})</option>
+          <option value="{{ b.id }}"{% if b.id in edit_supervisor_base_ids %} selected{% endif %}>{{ b.name }} ({{ b.location }})</option>
           {% endfor %}
         </select>
       </label>
-      <button class="full" type="submit">Cadastrar Supervisor</button>
+      <button class="full" type="submit">{{ "Salvar alterações" if edit_supervisor else "Cadastrar Supervisor" }}</button>
+      {% if edit_supervisor %}
+      <a class="pill" href="/empresa/gerencial">Cancelar edição</a>
+      {% endif %}
     </form>
 
     <h3 style="margin-top: 2rem;">Supervisores Ativos</h3>
@@ -35,22 +41,83 @@
   </section>
 
   <section class="panel">
-    <h3>Cadastro de Parceiro</h3>
+    <h3>{{ "Editar Parceiro" if edit_partner else "Cadastro de Parceiro" }}</h3>
     <form class="form-grid" method="post" action="/empresa/gerencial/partners/new">
+      {% if edit_partner %}
+      <input type="hidden" name="partner_id" value="{{ edit_partner.id }}" />
+      {% endif %}
       <label class="full">Nome Completo
-        <input name="full_name" required />
+        <input name="full_name" value="{{ edit_partner.full_name if edit_partner else '' }}" required />
       </label>
       <label>E-mail
-        <input type="email" name="email" required />
+        <input type="email" name="email" value="{{ edit_partner.email if edit_partner else '' }}" required />
       </label>
       <label>Senha Provisória
-        <input type="password" name="password" required />
+        <input type="password" name="password" {% if not edit_partner %}required{% endif %} />
       </label>
       <label>Telefone
-        <input name="phone" placeholder="71 99876-5213" />
+        <input name="phone" value="{{ edit_partner.phone if edit_partner else '' }}" placeholder="71 99876-5213" />
       </label>
       <label class="full">Empresa
-        <input name="company_name" required placeholder="Digite o nome da empresa" />
+        <input name="company_name" value="{{ edit_partner.company_name if edit_partner else '' }}" required placeholder="Digite o nome da empresa" />
+      </label>
+      <label class="full">Bases de Atuação (Segure Ctrl para selecionar várias)
+        <select name="base_ids" multiple required style="min-height: 100px;">
+          {% for b in bases %}
+          <option value="{{ b.id }}"{% if b.id in edit_partner_base_ids %} selected{% endif %}>{{ b.name }} ({{ b.location }})</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label>SLA Contratual (minutos)
+        <input type="number" name="sla_minutes" value="30" required />
+      </label>
+      <button class="full" type="submit">{{ "Salvar alterações" if edit_partner else "Cadastrar Parceiro" }}</button>
+      {% if edit_partner %}
+      <a class="pill" href="/empresa/gerencial">Cancelar edição</a>
+      {% endif %}
+    </form>
+
+    <h3 style="margin-top: 2rem;">Parceiros Ativos</h3>
+    {% include '_manager_partners.html' %}
+  </section>
+</div>
+
+<div class="split" style="margin-top: 1rem;">
+  <section class="panel">
+    <h3>{{ "Editar Base" if edit_base else "Cadastro de Base" }}</h3>
+    <form class="form-grid" method="post" action="/empresa/gerencial/bases/new">
+      {% if edit_base %}
+      <input type="hidden" name="base_id" value="{{ edit_base.id }}" />
+      {% endif %}
+      <label class="full">Estado
+        <input name="name" value="{{ edit_base.name if edit_base else '' }}" required />
+      </label>
+      <label>Localização
+        <input name="location" value="{{ edit_base.location if edit_base else '' }}" />
+      </label>
+      <label>SLA padrão (minutos)
+        <input type="number" name="sla_minutes" value="{{ edit_base.sla_minutes if edit_base else 30 }}" required />
+      </label>
+      <button class="full" type="submit">{{ "Salvar alterações" if edit_base else "Cadastrar Base" }}</button>
+      {% if edit_base %}
+      <a class="pill" href="/empresa/gerencial">Cancelar edição</a>
+      {% endif %}
+    </form>
+
+    <h3 style="margin-top: 2rem;">Bases</h3>
+    <div id="manager-bases">
+      {% include '_manager_bases.html' %}
+    </div>
+  </section>
+
+  <section class="panel">
+    <h3>{{ "Editar Empresa" if edit_company else "Adicionar Empresa" }}</h3>
+    <form class="form-grid" method="post" action="/empresa/gerencial/companies/new">
+      {% if edit_company %}
+      <input type="hidden" name="company_id" value="{{ edit_company.id }}" />
+      {% endif %}
+      <label class="full">Nome da Empresa
+        <input name="company_name" value="{{ edit_company.name if edit_company else '' }}" required />
       </label>
       <label class="full">Bases de Atuação (Segure Ctrl para selecionar várias)
         <select name="base_ids" multiple required style="min-height: 100px;">
@@ -62,16 +129,16 @@
       <label>SLA Contratual (minutos)
         <input type="number" name="sla_minutes" value="30" required />
       </label>
-      <button class="full" type="submit">Cadastrar Parceiro</button>
+      <button class="full" type="submit">{{ "Salvar alterações" if edit_company else "Cadastrar Empresa" }}</button>
+      {% if edit_company %}
+      <a class="pill" href="/empresa/gerencial">Cancelar edição</a>
+      {% endif %}
     </form>
 
-    <h3 style="margin-top: 2rem;">Parceiros Ativos</h3>
-    {% include '_manager_partners.html' %}
+    <h3 style="margin-top: 2rem;">Empresas por Base</h3>
+    <div id="manager-companies">
+      {% include '_manager_companies.html' %}
+    </div>
   </section>
 </div>
-
-<section class="panel" style="margin-top: 1rem;">
-  <h3>Configuração de Contratos (SLA por Base)</h3>
-  {% include '_manager_contracts.html' %}
-</section>
 {% endblock %}

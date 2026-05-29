@@ -1,0 +1,39 @@
+<div id="manager-bases" class="list-wrap">
+  {% for b in bases %}
+  <details>
+    <summary>
+      <strong>{{ b.name }}</strong> — {{ b.location or 'Local não informado' }}
+      <span style="margin-left: 0.5rem; color: #666">(SLA padrão: {{ b.sla_minutes }} min)</span>
+      <span style="float: right;">
+        <a href="/empresa/gerencial?edit_base_id={{ b.id }}" title="Editar" aria-label="Editar base">
+          <!-- pencil icon -->
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25z" fill="currentColor"/><path d="M20.71 7.04a1.003 1.003 0 000-1.42l-2.34-2.34a1.003 1.003 0 00-1.42 0l-1.83 1.83 3.75 3.75 1.84-1.82z" fill="currentColor"/></svg>
+        </a>
+        <form method="post" action="/empresa/gerencial/bases/{{ b.id }}/delete" style="display:inline;" onsubmit="return true;">
+          <button class="icon" type="submit" data-confirm="Tem certeza que deseja excluir a base '{{ b.name }}'? Esta ação não poderá ser desfeita.">
+            <!-- trash icon -->
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M6 19a2 2 0 002 2h8a2 2 0 002-2V7H6v12z" fill="currentColor"/><path d="M19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z" fill="currentColor"/></svg>
+          </button>
+        </form>
+      </span>
+    </summary>
+    <div style="padding: 0.5rem 1rem;">
+      <p style="margin:0 0 0.5rem 0; font-size:0.9rem; color:#444">Empresas vinculadas:</p>
+      <ul>
+        {% for cb in company_base_info if cb.base_id == b.id %}
+        <li>
+          {% for c in companies if c.id == cb.company_id %}
+            {{ c.name }} — SLA contratual: {{ cb.contract_sla_minutes or b.sla_minutes }} min
+            <form method="post" action="/empresa/gerencial/companies/{{ c.id }}/delete" style="display:inline; margin-left:0.5rem;">
+              <button class="icon" type="submit" data-confirm="Tem certeza que deseja excluir a empresa '{{ c.name }}'?"></button>
+            </form>
+          {% endfor %}
+        </li>
+        {% else %}
+        <li style="color:#666">Nenhuma empresa vinculada a esta base.</li>
+        {% endfor %}
+      </ul>
+    </div>
+  </details>
+  {% endfor %}
+</div>

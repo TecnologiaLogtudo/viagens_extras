@@ -1,0 +1,38 @@
+<div id="manager-companies" class="list-wrap">
+  {% for c in companies %}
+  <details>
+    <summary>
+      <strong>{{ c.name }}</strong> — Bases atendidas
+      <span style="float: right;">
+        <a href="/empresa/gerencial?edit_company_id={{ c.id }}" title="Editar empresa" aria-label="Editar empresa">
+          <!-- pencil icon -->
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25z" fill="currentColor"/><path d="M20.71 7.04a1.003 1.003 0 000-1.42l-2.34-2.34a1.003 1.003 0 00-1.42 0l-1.83 1.83 3.75 3.75 1.84-1.82z" fill="currentColor"/></svg>
+        </a>
+        <form method="post" action="/empresa/gerencial/companies/{{ c.id }}/delete" style="display:inline;">
+          <button class="icon" type="submit" data-confirm="Tem certeza que deseja excluir a empresa '{{ c.name }}'? Esta ação não poderá ser desfeita."> 
+            <!-- trash icon -->
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M6 19a2 2 0 002 2h8a2 2 0 002-2V7H6v12z" fill="currentColor"/><path d="M19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z" fill="currentColor"/></svg>
+          </button>
+        </form>
+      </span>
+    </summary>
+    <div style="padding:0.5rem 1rem;">
+      <ul>
+        {% set found = false %}
+        {% for cb in company_base_info if cb.company_id == c.id %}
+          {% for b in bases if b.id == cb.base_id %}
+            {% set found = true %}
+            <li>
+              <strong>{{ b.name }}</strong>
+              <span style="color:#666">— SLA contratual: {{ cb.contract_sla_minutes or b.sla_minutes }} min</span>
+            </li>
+          {% endfor %}
+        {% endfor %}
+        {% if not found %}
+        <li style="color:#666">Nenhuma base vinculada a esta empresa.</li>
+        {% endif %}
+      </ul>
+    </div>
+  </details>
+  {% endfor %}
+</div>

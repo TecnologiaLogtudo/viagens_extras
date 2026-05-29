@@ -33,6 +33,11 @@ body {
   pointer-events: none;
 }
 
+.bg-grayscale {
+  backdrop-filter: grayscale(70%);
+  -webkit-backdrop-filter: grayscale(70%);
+}
+
 .shell {
   width: min(1240px, calc(100% - 2rem));
   margin: 1rem auto 2rem;
@@ -99,6 +104,18 @@ button {
   font-weight: 700;
   cursor: pointer;
 }
+
+.icon {
+  background: transparent;
+  border: 0;
+  padding: 0.18rem;
+  margin-left: 0.35rem;
+  color: var(--deep);
+  cursor: pointer;
+  border-radius: 6px;
+}
+.icon svg { display: inline-block; vertical-align: middle; }
+.icon:hover { background: rgba(0,0,0,0.04); }
 
 .context-nav a:hover,
 .button-like:hover,
@@ -272,6 +289,52 @@ th {
 .pill.status-in_route { background: #dbf0e9; color: #246353; }
 .pill.status-absent { background: #ffdfe3; color: #8a2f3a; }
 
+.system-confirm {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: rgba(16, 18, 20, 0.52);
+  z-index: 9999;
+}
+
+.system-confirm.hidden { display: none; }
+
+.system-confirm-dialog {
+  width: min(480px, calc(100% - 2rem));
+  background: var(--paper);
+  border-radius: 18px;
+  border: 1px solid var(--line);
+  padding: 1.2rem;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.16);
+}
+
+.system-confirm-dialog p {
+  margin: 0 0 1rem;
+  color: var(--ink);
+  font-weight: 700;
+}
+
+.system-confirm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.65rem;
+}
+
+.system-confirm-actions button {
+  min-width: 96px;
+}
+
+.system-confirm-actions button:first-child {
+  background: #f5f5f3;
+  color: var(--ink);
+}
+
+.system-confirm-actions button:last-child {
+  background: var(--danger);
+  color: #fff;
+}
+
 details {
   margin-top: 0.4rem;
   border-radius: 10px;
@@ -309,7 +372,24 @@ details {
   padding: 1.2rem;
 }
 
-.auth-form { display: grid; gap: 0.6rem; margin-top: 0.8rem; }
+.auth-logo {
+  display: block;
+  width: min(100%, 180px);
+  max-width: 180px;
+  margin: 0.5rem auto 0.8rem;
+}
+
+.auth-form {
+  display: grid;
+  gap: 1rem;
+  margin-top: 0.5rem;
+}
+
+.auth-card h1 {
+  font-size: 1.5rem; /* Ajuste o tamanho conforme desejar */
+  margin-top: 0;
+  margin-bottom: 0.5rem;
+}
 
 .hint-box {
   margin-top: 1rem;

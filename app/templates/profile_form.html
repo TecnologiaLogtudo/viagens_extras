@@ -1,23 +1,20 @@
 {% macro profile_fields(values={}) -%}
-<label>Nome completo
+<label>Nome completo*
   <input name="full_name" required value="{{ values.get('full_name', '') }}" />
 </label>
-<label>E-mail
+<label>E-mail*
   <input type="email" name="email" required value="{{ values.get('email', '') }}" placeholder="usuario@empresa.com" />
 </label>
-<label>Senha
+<label>Senha*
   <input type="password" name="password" required minlength="8" />
 </label>
-<label>Empresa
+<label>Empresa*
   <input name="company_name" required value="{{ values.get('company_name', '') }}" />
 </label>
-<label>Telefone (E.164)
-  <input name="phone" value="{{ values.get('phone', '') }}" placeholder="+5571999990001" />
+<label>Telefone
+  <input name="phone" value="{{ values.get('phone', '') }}" placeholder="71 99999-0001" />
 </label>
 <label>Cargo
   <input name="job_title" value="{{ values.get('job_title', '') }}" />
-</label>
-<label class="full">Endereço
-  <textarea name="address">{{ values.get('address', '') }}</textarea>
 </label>
 {%- endmacro %}

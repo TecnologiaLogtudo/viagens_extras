@@ -1,7 +1,7 @@
 <div id="manager-partners" class="table-wrap">
   <table>
     <thead>
-      <tr><th>Nome</th><th>Empresa</th><th>Telefone</th><th>Bases</th></tr>
+      <tr><th>Nome</th><th>Empresa</th><th>Telefone</th><th>Bases</th><th>Ações</th></tr>
     </thead>
     <tbody>
       {% for p in partners %}
@@ -13,6 +13,12 @@
           {% for base_name in partner_base_names.get(p.id, []) %}
           <span class="pill status-available">{{ base_name }}</span>
           {% endfor %}
+        </td>
+        <td>
+          <a class="pill" href="/empresa/gerencial?edit_partner_id={{ p.id }}">Editar</a>
+          <form method="post" action="/empresa/gerencial/partners/{{ p.id }}/delete" style="display:inline;margin-left:0.5rem;">
+            <button type="submit" class="pill red" data-confirm="Deletar esse parceiro?">Excluir</button>
+          </form>
         </td>
       </tr>
       {% endfor %}
