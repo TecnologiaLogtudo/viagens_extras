@@ -127,7 +127,7 @@ def _scoped_requests(session: Session, user: User):
 
 def _base_context(session: Session, user: User) -> dict:
     scoped = _scoped_requests(session, user)
-    bases = session.exec(select(Base)).all()
+    bases = session.exec(select(Base).order_by(Base.name)).all()
     sla_info = {}
     for req in scoped:
         base = next((b for b in bases if b.id == req.base_id), None)
@@ -205,11 +205,11 @@ def _base_context(session: Session, user: User) -> dict:
 
 
 def _manager_context(session: Session) -> dict:
-    bases = session.exec(select(Base).where(Base.active == True)).all()
-    companies = session.exec(select(Company).where(Company.active == True)).all()
+    bases = session.exec(select(Base).where(Base.active == True).order_by(Base.name)).all()
+    companies = session.exec(select(Company).where(Company.active == True).order_by(Company.name)).all()
     supervisors = session.exec(select(User).where(User.role == UserRole.BASE_SUPERVISOR)).all()
     partners = session.exec(select(User).where(User.role == UserRole.PARTNER_REQUESTER)).all()
-    company_base_links = session.exec(select(CompanyBase)).all()
+    company_base_links = session.exec(select(CompanyBase).order_by(CompanyBase.company_id, CompanyBase.base_id)).all()
     base_by_id = {base.id: base for base in bases}
     base_company_ids_by_base_id: dict[int, list[int]] = {base.id: [] for base in bases}
     company_bases_by_company_id: dict[int, list[Base]] = {company.id: [] for company in companies}
@@ -223,6 +223,10 @@ def _manager_context(session: Session) -> dict:
         company_base_meta_by_company_id.setdefault(link.company_id, []).append(
             {"base": base, "contract_sla_minutes": link.contract_sla_minutes}
         )
+    for base_list in company_bases_by_company_id.values():
+        base_list.sort(key=lambda base: base.name.lower())
+    for meta_list in company_base_meta_by_company_id.values():
+        meta_list.sort(key=lambda item: item["base"].name.lower())
 
     supervisor_base_ids = {}
     supervisor_company_names = {}
@@ -241,9 +245,9 @@ def _manager_context(session: Session) -> dict:
 
     partner_base_names = {}
     for p in partners:
-        partner_base_names[p.id] = [b.name for b in p.bases]
+        partner_base_names[p.id] = sorted((b.name for b in p.bases), key=str.lower)
 
-    company_base_info = session.exec(select(CompanyBase)).all()
+    company_base_info = session.exec(select(CompanyBase).order_by(CompanyBase.company_id, CompanyBase.base_id)).all()
     return {
         "bases": bases,
         "companies": companies,
