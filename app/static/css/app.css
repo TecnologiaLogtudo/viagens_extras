@@ -214,6 +214,10 @@ button:hover { filter: brightness(1.06); }
   gap: 0.55rem;
 }
 
+.form-grid.base-form-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
 label {
   display: grid;
   gap: 0.25rem;
@@ -271,6 +275,9 @@ input, select, textarea {
 
 textarea { min-height: 72px; }
 .full { grid-column: 1 / -1; }
+.multi-select {
+  min-height: 7.5rem;
+}
 
 fieldset.grouped-select {
   margin: 0;
@@ -560,6 +567,7 @@ details {
 @media (max-width: 700px) {
   .shell { width: calc(100% - 1rem); }
   .form-grid { grid-template-columns: 1fr; }
+  .form-grid.base-form-grid { grid-template-columns: 1fr; }
   .metrics { grid-template-columns: 1fr; }
   .topbar { align-items: start; flex-direction: column; }
   .table-wrap table { min-width: 540px; }

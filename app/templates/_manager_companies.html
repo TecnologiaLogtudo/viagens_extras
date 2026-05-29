@@ -23,13 +23,12 @@
           {% for b in bases if b.id == cb.base_id %}
             {% set found = true %}
             <li>
-              <strong>{{ b.name }}</strong>
+              <strong>{{ b.name }} - {{ b.location or 'Local não informado' }}</strong>
               <span style="color:#666">— SLA contratual: {{ cb.contract_sla_minutes or b.sla_minutes }} min</span>
             </li>
           {% endfor %}
         {% endfor %}
         {% if not found %}
-        <li style="color:#666">Nenhuma base vinculada a esta empresa.</li>
         {% endif %}
       </ul>
     </div>

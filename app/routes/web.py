@@ -211,12 +211,14 @@ def _manager_context(session: Session) -> dict:
     partners = session.exec(select(User).where(User.role == UserRole.PARTNER_REQUESTER)).all()
     company_base_links = session.exec(select(CompanyBase)).all()
     base_by_id = {base.id: base for base in bases}
+    base_company_ids_by_base_id: dict[int, list[int]] = {base.id: [] for base in bases}
     company_bases_by_company_id: dict[int, list[Base]] = {company.id: [] for company in companies}
     company_base_meta_by_company_id: dict[int, list[dict]] = {company.id: [] for company in companies}
     for link in company_base_links:
         base = base_by_id.get(link.base_id)
         if not base:
             continue
+        base_company_ids_by_base_id.setdefault(base.id, []).append(link.company_id)
         company_bases_by_company_id.setdefault(link.company_id, []).append(base)
         company_base_meta_by_company_id.setdefault(link.company_id, []).append(
             {"base": base, "contract_sla_minutes": link.contract_sla_minutes}
@@ -246,6 +248,7 @@ def _manager_context(session: Session) -> dict:
         "bases": bases,
         "companies": companies,
         "company_base_links": company_base_links,
+        "base_company_ids_by_base_id": base_company_ids_by_base_id,
         "company_bases_by_company_id": company_bases_by_company_id,
         "company_base_meta_by_company_id": company_base_meta_by_company_id,
         "supervisors": supervisors,
@@ -314,6 +317,27 @@ def _sse_event_payload(event: EventLog) -> dict:
     if event.event_type == "manager_data_changed":
         return {"kind": "manager_data_changed"}
     return {"kind": "request_changed", "request_id": event.request_id}
+
+
+def _resolve_company_from_base_ids(session: Session, base_ids: list[int]) -> Company | None:
+    company_ids_by_base_id: dict[int, set[int]] = {}
+    for base_id in base_ids:
+        links = session.exec(select(CompanyBase).where(CompanyBase.base_id == base_id)).all()
+        company_ids_by_base_id[base_id] = {link.company_id for link in links}
+
+    common_company_ids: set[int] | None = None
+    for company_ids in company_ids_by_base_id.values():
+        if not company_ids:
+            return None
+        common_company_ids = company_ids if common_company_ids is None else common_company_ids & company_ids
+        if not common_company_ids:
+            return None
+
+    if not common_company_ids or len(common_company_ids) != 1:
+        return None
+
+    company_id = next(iter(common_company_ids))
+    return session.get(Company, company_id)
 
 
 @router.get("/", response_class=HTMLResponse)
@@ -604,10 +628,12 @@ def company_manager(
 
     edit_base_id = request.query_params.get("edit_base_id")
     edit_base = None
+    edit_base_company_ids = []
     if edit_base_id and edit_base_id.isdigit():
         candidate = session.get(Base, int(edit_base_id))
         if candidate:
             edit_base = candidate
+            edit_base_company_ids = manager_ctx.get("base_company_ids_by_base_id", {}).get(edit_base.id, [])
 
     edit_company_id = request.query_params.get("edit_company_id")
     edit_company = None
@@ -631,6 +657,7 @@ def company_manager(
             "edit_supervisor_base_ids": edit_supervisor_base_ids,
             "edit_partner_base_ids": edit_partner_base_ids,
             "edit_base": edit_base,
+            "edit_base_company_ids": edit_base_company_ids,
             "edit_company": edit_company,
         },
     )
@@ -709,10 +736,8 @@ def register_partner(
     full_name: str = Form(...),
     email: str = Form(...),
     password: str = Form(...),
-    company_name: str = Form(...),
     phone: str = Form(default=""),
     base_ids: List[int] = Form(...),
-    sla_minutes: int = Form(...),
     partner_id: int | None = Form(None),
     session: Session = Depends(get_session),
 ):
@@ -726,22 +751,15 @@ def register_partner(
     existing = session.exec(select(User).where(User.email == normalized_email)).first()
     if existing and (partner_id is None or existing.id != partner_id):
         return _redirect("/empresa/gerencial?error=Email+já+cadastrado")
-    normalized_company_name = company_name.strip()
-    if not normalized_company_name:
-        return _redirect("/empresa/gerencial?error=Empresa+é+obrigatória")
     phone_digits = re.sub(r"\D", "", phone.strip())
     if phone_digits and not PHONE_BR_DIGITS_RE.match(phone_digits):
         return _redirect("/empresa/gerencial?error=Telefone+invalido.+Use+DDD+com+10+ou+11+digitos.")
 
-    company = session.exec(select(Company).where(Company.name == normalized_company_name)).first()
-    company_created = False
-    if not company:
-        company = Company(name=normalized_company_name, cnpj="PENDENTE")
-        session.add(company)
-        session.flush()
-        company_created = True
-
     unique_base_ids = sorted(set(base_ids))
+    company = _resolve_company_from_base_ids(session, unique_base_ids)
+    if not company:
+        return _redirect("/empresa/gerencial?error=Não+foi+possível+identificar+a+empresa+a+partir+das+bases+selecionadas")
+
     if partner_id:
         partner = session.get(User, partner_id)
         if not partner or partner.role != UserRole.PARTNER_REQUESTER:
@@ -759,18 +777,8 @@ def register_partner(
             if not base:
                 return _redirect("/empresa/gerencial?error=Base+invalida+selecionada")
             session.add(UserBaseLink(user_id=partner.id, base_id=b_id))
-            existing_cb = session.exec(select(CompanyBase).where(
-                and_(CompanyBase.company_id == company.id, CompanyBase.base_id == b_id)
-            )).first()
-            if existing_cb:
-                existing_cb.contract_sla_minutes = sla_minutes
-                session.add(existing_cb)
-            else:
-                session.add(CompanyBase(company_id=company.id, base_id=b_id, contract_sla_minutes=sla_minutes))
         session.add(EventLog(actor_user_id=user.id, event_type="manager_data_changed", payload="partner_updated"))
         session.commit()
-        if company_created:
-            return _redirect("/empresa/gerencial?message=Parceiro+atualizado+com+sucesso.+Empresa+criada+automaticamente+e+vinculos+de+base+atualizados.")
         return _redirect("/empresa/gerencial?message=Parceiro+atualizado+com+sucesso")
 
     new_user = User(
@@ -791,19 +799,9 @@ def register_partner(
         if not base:
             return _redirect("/empresa/gerencial?error=Base+invalida+selecionada")
         session.add(UserBaseLink(user_id=new_user.id, base_id=b_id))
-        existing_cb = session.exec(select(CompanyBase).where(
-            and_(CompanyBase.company_id == company.id, CompanyBase.base_id == b_id)
-        )).first()
-        if existing_cb:
-            existing_cb.contract_sla_minutes = sla_minutes
-            session.add(existing_cb)
-        else:
-            session.add(CompanyBase(company_id=company.id, base_id=b_id, contract_sla_minutes=sla_minutes))
         
     session.add(EventLog(actor_user_id=user.id, event_type="manager_data_changed", payload="partner_created_or_updated"))
     session.commit()
-    if company_created:
-        return _redirect("/empresa/gerencial?message=Parceiro+cadastrado+com+sucesso.+Empresa+criada+automaticamente+e+vinculos+de+base+atualizados.")
     return _redirect("/empresa/gerencial?message=Parceiro+cadastrado+com+sucesso.+Vinculos+de+base+atualizados.")
 
 
@@ -1045,6 +1043,7 @@ def register_base(
     name: str = Form(...),
     location: str = Form(default=""),
     sla_minutes: int = Form(30),
+    company_ids: List[int] | None = Form(default=None),
     base_id: int | None = Form(None),
     session: Session = Depends(get_session),
     user: User = Depends(finance_or_manager),
@@ -1055,6 +1054,16 @@ def register_base(
     if not normalized_name:
         return _redirect("/empresa/gerencial?error=Nome+da+base+é+obrigatório")
 
+    selected_company_ids = sorted(set(company_ids or []))
+    selected_companies_by_id = {}
+    if selected_company_ids:
+        selected_companies = session.exec(
+            select(Company).where(and_(Company.active == True, Company.id.in_(selected_company_ids)))
+        ).all()
+        selected_companies_by_id = {company.id: company for company in selected_companies}
+        if len(selected_companies_by_id) != len(selected_company_ids):
+            return _redirect("/empresa/gerencial?error=Empresa+invalida")
+
     if base_id:
         base = session.get(Base, base_id)
         if not base:
@@ -1062,12 +1071,25 @@ def register_base(
         base.name = normalized_name
         base.location = location.strip() or None
         base.sla_minutes = sla_minutes
+        existing_links = session.exec(select(CompanyBase).where(CompanyBase.base_id == base.id)).all()
+        for link in existing_links:
+            if link.company_id not in selected_company_ids:
+                session.delete(link)
+        for company_id, company in selected_companies_by_id.items():
+            existing_link = session.exec(
+                select(CompanyBase).where(and_(CompanyBase.company_id == company.id, CompanyBase.base_id == base.id))
+            ).first()
+            if not existing_link:
+                session.add(CompanyBase(company_id=company.id, base_id=base.id))
         session.add(EventLog(actor_user_id=user.id, event_type="manager_data_changed", payload="base_updated"))
         session.commit()
         return _redirect("/empresa/gerencial?message=Base+atualizada+com+sucesso")
 
     new_base = Base(name=normalized_name, location=location.strip() or None, sla_minutes=sla_minutes)
     session.add(new_base)
+    session.flush()
+    for company_id, company in selected_companies_by_id.items():
+        session.add(CompanyBase(company_id=company.id, base_id=new_base.id))
     session.add(EventLog(actor_user_id=user.id, event_type="manager_data_changed", payload="base_created"))
     session.commit()
     return _redirect("/empresa/gerencial?message=Base+cadastrada+com+sucesso")
