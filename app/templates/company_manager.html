@@ -35,7 +35,7 @@
         {% if companies %}
         <div class="company-tree">
           {% for company in companies %}
-          {% set company_bases = company_bases_by_company_id.get(company.id, []) %}
+          {% set company_bases = company_base_choices_by_company_id.get(company.id, []) %}
           <details class="company-group">
             <summary>
               <strong>{{ company.name }}</strong>
@@ -53,14 +53,14 @@
                 <label class="base-choice">
                   <input
                     type="checkbox"
-                    name="base_ids"
+                    name="company_base_link_ids"
                     value="{{ base.id }}"
                     data-company-id="{{ company.id }}"
-                    {% if base.id in edit_supervisor_base_ids %}checked{% endif %}
+                    {% if base.id in edit_supervisor_company_base_link_ids %}checked{% endif %}
                   />
                   <span class="base-choice-text">
-                    <strong>{{ base.name }}</strong>
-                    <span>{{ base.location or 'Local não informado' }}</span>
+                    <strong>{{ base.base.name }} - {{ base.base.location or 'Local não informado' }}</strong>
+                    <span>SLA contratual: {{ base.contract_sla_minutes or base.base.sla_minutes }} min</span>
                   </span>
                 </label>
                 {% endfor %}
@@ -241,7 +241,7 @@
 
     const updateCompanyState = function (group) {
       const companyId = group.dataset.companyId;
-      const children = group.querySelectorAll(`input[type="checkbox"][name="base_ids"][data-company-id="${companyId}"]`);
+      const children = group.querySelectorAll(`input[type="checkbox"][name="company_base_link_ids"][data-company-id="${companyId}"]`);
       const master = group.querySelector(`input[type="checkbox"][data-company-toggle="${companyId}"]`);
       if (!master) return;
 
@@ -260,7 +260,7 @@
       group.dataset.companyId = companyId;
 
       const master = group.querySelector(`input[type="checkbox"][data-company-toggle="${companyId}"]`);
-      const children = group.querySelectorAll(`input[type="checkbox"][name="base_ids"][data-company-id="${companyId}"]`);
+      const children = group.querySelectorAll(`input[type="checkbox"][name="company_base_link_ids"][data-company-id="${companyId}"]`);
 
       master?.addEventListener("change", function () {
         children.forEach(function (checkbox) {

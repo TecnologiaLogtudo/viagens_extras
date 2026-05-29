@@ -14,8 +14,8 @@
           {% endfor %}
         </td>
         <td>
-          {% for b in sup.bases %}
-          <span class="pill status-available">{{ b.name }}</span>
+          {% for label in supervisor_base_labels.get(sup.id, []) %}
+          <span class="pill status-available">{{ label }}</span>
           {% endfor %}
         </td>
         <td>

@@ -40,6 +40,7 @@ from app.models import (
     User,
     UserRole,
     UserBaseLink,
+    UserCompanyBaseLink,
     Vehicle,
 )
 from app.services.datetime_utils import parse_form_datetime
@@ -59,6 +60,8 @@ from app.services.workflow import (
     request_otp,
     resend_otp,
     sign_acceptance,
+    supervisor_allowed_base_ids,
+    supervisor_can_access_request,
     triage_request,
 )
 
@@ -112,14 +115,11 @@ def _require_roles_or_redirect(
 def _scoped_requests(session: Session, user: User):
     requests = session.exec(select(TravelRequest).order_by(TravelRequest.created_at.desc())).all()
     scoped = []
-    
-    # Supervisor multiple bases check
-    allowed_base_ids = {b.id for b in user.bases} if user.role == UserRole.BASE_SUPERVISOR else set()
 
     for req in requests:
         if user.role == UserRole.PARTNER_REQUESTER and req.company_id != user.company_id:
             continue
-        if user.role == UserRole.BASE_SUPERVISOR and req.base_id not in allowed_base_ids:
+        if user.role == UserRole.BASE_SUPERVISOR and not supervisor_can_access_request(session, user, req):
             continue
         scoped.append(req)
     return scoped
@@ -214,6 +214,7 @@ def _manager_context(session: Session) -> dict:
     base_company_ids_by_base_id: dict[int, list[int]] = {base.id: [] for base in bases}
     company_bases_by_company_id: dict[int, list[Base]] = {company.id: [] for company in companies}
     company_base_meta_by_company_id: dict[int, list[dict]] = {company.id: [] for company in companies}
+    company_base_choices_by_company_id: dict[int, list[dict]] = {company.id: [] for company in companies}
     for link in company_base_links:
         base = base_by_id.get(link.base_id)
         if not base:
@@ -221,27 +222,42 @@ def _manager_context(session: Session) -> dict:
         base_company_ids_by_base_id.setdefault(base.id, []).append(link.company_id)
         company_bases_by_company_id.setdefault(link.company_id, []).append(base)
         company_base_meta_by_company_id.setdefault(link.company_id, []).append(
-            {"base": base, "contract_sla_minutes": link.contract_sla_minutes}
+            {"id": link.id, "base": base, "contract_sla_minutes": link.contract_sla_minutes}
+        )
+        company_base_choices_by_company_id.setdefault(link.company_id, []).append(
+            {"id": link.id, "base": base, "contract_sla_minutes": link.contract_sla_minutes}
         )
     for base_list in company_bases_by_company_id.values():
         base_list.sort(key=lambda base: base.name.lower())
     for meta_list in company_base_meta_by_company_id.values():
         meta_list.sort(key=lambda item: item["base"].name.lower())
+    for choice_list in company_base_choices_by_company_id.values():
+        choice_list.sort(key=lambda item: (item["base"].name.lower(), (item["base"].location or "").lower()))
 
-    supervisor_base_ids = {}
+    supervisor_company_base_link_ids = {}
     supervisor_company_names = {}
+    supervisor_base_labels = {}
     for sup in supervisors:
-        supervisor_base_ids[sup.id] = [b.id for b in sup.bases]
-        covered_company_ids = set()
-        for base in sup.bases:
-            links = session.exec(select(CompanyBase).where(CompanyBase.base_id == base.id)).all()
-            covered_company_ids.update(link.company_id for link in links)
+        selected_links = session.exec(
+            select(CompanyBase)
+            .join(UserCompanyBaseLink, UserCompanyBaseLink.company_base_id == CompanyBase.id)
+            .where(UserCompanyBaseLink.user_id == sup.id)
+            .order_by(CompanyBase.company_id, CompanyBase.base_id)
+        ).all()
+        supervisor_company_base_link_ids[sup.id] = [link.id for link in selected_links]
         names = []
-        for cid in covered_company_ids:
-            comp = session.get(Company, cid)
-            if comp:
-                names.append(comp.name)
-        supervisor_company_names[sup.id] = sorted(names)
+        labels = []
+        seen_company_ids = set()
+        for link in selected_links:
+            company = session.get(Company, link.company_id)
+            base = session.get(Base, link.base_id)
+            if company and company.id not in seen_company_ids:
+                names.append(company.name)
+                seen_company_ids.add(company.id)
+            if base:
+                labels.append(f"{company.name if company else 'Empresa'} - {base.name} - {base.location or 'Local não informado'}")
+        supervisor_company_names[sup.id] = sorted(names, key=str.lower)
+        supervisor_base_labels[sup.id] = labels
 
     partner_base_names = {}
     for p in partners:
@@ -255,10 +271,12 @@ def _manager_context(session: Session) -> dict:
         "base_company_ids_by_base_id": base_company_ids_by_base_id,
         "company_bases_by_company_id": company_bases_by_company_id,
         "company_base_meta_by_company_id": company_base_meta_by_company_id,
+        "company_base_choices_by_company_id": company_base_choices_by_company_id,
         "supervisors": supervisors,
         "partners": partners,
-        "supervisor_base_ids": supervisor_base_ids,
+        "supervisor_company_base_link_ids": supervisor_company_base_link_ids,
         "supervisor_company_names": supervisor_company_names,
+        "supervisor_base_labels": supervisor_base_labels,
         "partner_base_names": partner_base_names,
         "company_base_info": company_base_info,
     }
@@ -276,8 +294,7 @@ def _request_visible_to_user(session: Session, request_id: int | None, user: Use
     if user.role == UserRole.PARTNER_REQUESTER:
         return req.company_id == user.company_id
     if user.role == UserRole.BASE_SUPERVISOR:
-        allowed_base_ids = {b.id for b in user.bases}
-        return req.base_id in allowed_base_ids
+        return supervisor_can_access_request(session, user, req)
     if user.role == UserRole.FINANCE_READONLY:
         return req.status == RequestStatus.COMPLETED
     return False
@@ -306,10 +323,7 @@ def _event_matches_user(session: Session, event: EventLog, user: User) -> bool:
         if not event.request_id:
             return False
         req = session.get(TravelRequest, event.request_id)
-        if not req:
-            return False
-        allowed_base_ids = {b.id for b in user.bases}
-        return req.base_id in allowed_base_ids
+        return bool(req and supervisor_can_access_request(session, user, req))
     if event.event_type in request_event_types:
         return _request_visible_to_user(session, event.request_id, user)
     return False
@@ -579,8 +593,7 @@ def company_operations(
     if selected_request_id and selected_request_id.isdigit():
         req = session.get(TravelRequest, int(selected_request_id))
         if req:
-            allowed_base_ids = {b.id for b in user.bases} if user.role == UserRole.BASE_SUPERVISOR else set()
-            if user.role != UserRole.BASE_SUPERVISOR or req.base_id in allowed_base_ids:
+            if user.role != UserRole.BASE_SUPERVISOR or supervisor_can_access_request(session, user, req):
                 selected_request = req
                 drivers_for_selected = session.exec(
                     select(Driver).where(Driver.base_id == req.base_id).order_by(Driver.name)
@@ -613,7 +626,7 @@ def company_manager(
     manager_ctx = _manager_context(session)
     edit_supervisor = None
     edit_partner = None
-    edit_supervisor_base_ids = []
+    edit_supervisor_company_base_link_ids = []
     edit_partner_base_ids = []
 
     edit_supervisor_id = request.query_params.get("edit_supervisor_id")
@@ -621,7 +634,15 @@ def company_manager(
         candidate = session.get(User, int(edit_supervisor_id))
         if candidate and candidate.role == UserRole.BASE_SUPERVISOR:
             edit_supervisor = candidate
-            edit_supervisor_base_ids = [b.id for b in edit_supervisor.bases]
+            edit_supervisor_company_base_link_ids = [
+                link.id
+                for link in session.exec(
+                    select(CompanyBase)
+                    .join(UserCompanyBaseLink, UserCompanyBaseLink.company_base_id == CompanyBase.id)
+                    .where(UserCompanyBaseLink.user_id == candidate.id)
+                    .order_by(CompanyBase.company_id, CompanyBase.base_id)
+                ).all()
+            ]
 
     edit_partner_id = request.query_params.get("edit_partner_id")
     if edit_partner_id and edit_partner_id.isdigit():
@@ -658,7 +679,7 @@ def company_manager(
             "error": request.query_params.get("error"),
             "edit_supervisor": edit_supervisor,
             "edit_partner": edit_partner,
-            "edit_supervisor_base_ids": edit_supervisor_base_ids,
+            "edit_supervisor_company_base_link_ids": edit_supervisor_company_base_link_ids,
             "edit_partner_base_ids": edit_partner_base_ids,
             "edit_base": edit_base,
             "edit_base_company_ids": edit_base_company_ids,
@@ -674,7 +695,7 @@ def register_supervisor(
     email: str = Form(...),
     phone: str = Form(default=""),
     password: str = Form(...),
-    base_ids: List[int] = Form(...),
+    company_base_link_ids: List[int] = Form(...),
     supervisor_id: int | None = Form(None),
     session: Session = Depends(get_session),
 ):
@@ -682,7 +703,7 @@ def register_supervisor(
     if isinstance(user, RedirectResponse):
         return user
         
-    if len(base_ids) == 0:
+    if len(company_base_link_ids) == 0:
         return _redirect("/empresa/gerencial?error=Selecione+ao+menos+uma+base+para+o+supervisor")
 
     normalized_email = email.strip().lower()
@@ -692,7 +713,7 @@ def register_supervisor(
     if existing and (supervisor_id is None or existing.id != supervisor_id):
         return _redirect("/empresa/gerencial?error=Email+já+cadastrado")
 
-    unique_base_ids = sorted(set(base_ids))
+    unique_company_base_link_ids = sorted(set(company_base_link_ids))
     if supervisor_id:
         supervisor = session.get(User, supervisor_id)
         if not supervisor or supervisor.role != UserRole.BASE_SUPERVISOR:
@@ -703,11 +724,14 @@ def register_supervisor(
         if password:
             supervisor.password_hash = hash_password(password)
         session.exec(delete(UserBaseLink).where(UserBaseLink.user_id == supervisor.id))
-        for b_id in unique_base_ids:
-            base = session.get(Base, b_id)
-            if not base:
-                return _redirect("/empresa/gerencial?error=Base+invalida+selecionada")
-            session.add(UserBaseLink(user_id=supervisor.id, base_id=b_id))
+        session.exec(delete(UserCompanyBaseLink).where(UserCompanyBaseLink.user_id == supervisor.id))
+        valid_links = session.exec(
+            select(CompanyBase).where(CompanyBase.id.in_(unique_company_base_link_ids))
+        ).all()
+        if len(valid_links) != len(unique_company_base_link_ids):
+            return _redirect("/empresa/gerencial?error=Base+invalida+selecionada")
+        for link in valid_links:
+            session.add(UserCompanyBaseLink(user_id=supervisor.id, company_base_id=link.id))
         session.add(EventLog(actor_user_id=user.id, event_type="manager_data_changed", payload="supervisor_updated"))
         session.commit()
         return _redirect("/empresa/gerencial?message=Supervisor+atualizado+com+sucesso")
@@ -722,12 +746,13 @@ def register_supervisor(
     )
     session.add(new_user)
     session.flush()
-    
-    for b_id in unique_base_ids:
-        base = session.get(Base, b_id)
-        if not base:
-            return _redirect("/empresa/gerencial?error=Base+invalida+selecionada")
-        session.add(UserBaseLink(user_id=new_user.id, base_id=b_id))
+    valid_links = session.exec(
+        select(CompanyBase).where(CompanyBase.id.in_(unique_company_base_link_ids))
+    ).all()
+    if len(valid_links) != len(unique_company_base_link_ids):
+        return _redirect("/empresa/gerencial?error=Base+invalida+selecionada")
+    for link in valid_links:
+        session.add(UserCompanyBaseLink(user_id=new_user.id, company_base_id=link.id))
         
     session.add(EventLog(actor_user_id=user.id, event_type="manager_data_changed", payload="supervisor_created"))
     session.commit()
@@ -822,6 +847,7 @@ def delete_supervisor(
     if not supervisor or supervisor.role != UserRole.BASE_SUPERVISOR:
         return _redirect("/empresa/gerencial?error=Supervisor+invalido")
     session.exec(delete(UserBaseLink).where(UserBaseLink.user_id == supervisor.id))
+    session.exec(delete(UserCompanyBaseLink).where(UserCompanyBaseLink.user_id == supervisor.id))
     session.delete(supervisor)
     session.add(EventLog(actor_user_id=user.id, event_type="manager_data_changed", payload="supervisor_deleted"))
     session.commit()
@@ -944,8 +970,7 @@ def operations_supervisor_panel_fragment(
     req = session.get(TravelRequest, selected_request_id)
     if not req:
         raise HTTPException(status_code=404, detail="Pedido não encontrado")
-    allowed_base_ids = {b.id for b in user.bases} if user.role == UserRole.BASE_SUPERVISOR else set()
-    if user.role == UserRole.BASE_SUPERVISOR and req.base_id not in allowed_base_ids:
+    if user.role == UserRole.BASE_SUPERVISOR and not supervisor_can_access_request(session, user, req):
         raise HTTPException(status_code=403, detail="Sem permissão para esta solicitação")
     drivers = session.exec(select(Driver).where(Driver.base_id == req.base_id).order_by(Driver.name)).all()
     vehicles = session.exec(select(Vehicle).where(Vehicle.base_id == req.base_id).order_by(Vehicle.plate)).all()
@@ -1257,8 +1282,7 @@ def supervisor_panel(
         raise HTTPException(status_code=404, detail="Pedido não encontrado")
     
     # Supervisor multiple bases check
-    allowed_base_ids = {b.id for b in user.bases} if user.role == UserRole.BASE_SUPERVISOR else set()
-    if user.role == UserRole.BASE_SUPERVISOR and req.base_id not in allowed_base_ids:
+    if user.role == UserRole.BASE_SUPERVISOR and not supervisor_can_access_request(session, user, req):
         raise HTTPException(status_code=403, detail="Sem permissão para esta solicitação")
 
     drivers = session.exec(select(Driver).where(Driver.base_id == req.base_id).order_by(Driver.name)).all()
@@ -1549,6 +1573,8 @@ def change_driver_status(
     if selected_request_id and selected_request_id.isdigit():
         req = session.get(TravelRequest, int(selected_request_id))
         if req:
+            if user.role == UserRole.BASE_SUPERVISOR and not supervisor_can_access_request(session, user, req):
+                raise HTTPException(status_code=403, detail="Sem permissão para esta solicitação")
             request_id = req.id
 
     driver = session.get(Driver, driver_id)
@@ -1556,7 +1582,7 @@ def change_driver_status(
         raise HTTPException(status_code=404, detail="Motorista não encontrado")
     
     # Supervisor multiple bases check
-    allowed_base_ids = {b.id for b in user.bases} if user.role == UserRole.BASE_SUPERVISOR else set()
+    allowed_base_ids = supervisor_allowed_base_ids(session, user) if user.role == UserRole.BASE_SUPERVISOR else set()
     if user.role == UserRole.BASE_SUPERVISOR and driver.base_id not in allowed_base_ids:
         raise HTTPException(status_code=403, detail="Sem permissão para este motorista")
 

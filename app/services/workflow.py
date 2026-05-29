@@ -36,7 +36,7 @@ from app.models import (
     TravelRequestCreate,
     User,
     UserRole,
-    UserBaseLink,
+    UserCompanyBaseLink,
     Vehicle,
 )
 
@@ -58,17 +58,56 @@ def ensure_aware(dt: datetime) -> datetime:
     return dt.astimezone(timezone.utc)
 
 
-def ensure_user_scope(user: User, request: TravelRequest) -> None:
+def ensure_user_scope(session: Session, user: User, request: TravelRequest) -> None:
     if user.role == UserRole.PARTNER_REQUESTER and user.company_id != request.company_id:
         raise DomainError("Acesso negado ao pedido de outra empresa.")
 
-    # Supervisor can be scoped by explicit base links or legacy single base_id.
+    # Supervisor access is scoped by company-base links.
     if user.role == UserRole.BASE_SUPERVISOR:
-        allowed_base_ids = {b.id for b in user.bases if b.id is not None}
-        if not allowed_base_ids and user.base_id is not None:
-            allowed_base_ids = {user.base_id}
-        if request.base_id not in allowed_base_ids:
+        allowed = session.exec(
+            select(CompanyBase)
+            .join(UserCompanyBaseLink, UserCompanyBaseLink.company_base_id == CompanyBase.id)
+            .where(
+                UserCompanyBaseLink.user_id == user.id,
+                CompanyBase.company_id == request.company_id,
+                CompanyBase.base_id == request.base_id,
+            )
+        ).first()
+        if not allowed:
             raise DomainError("Acesso negado ao pedido de outra base.")
+
+
+def supervisor_allowed_base_ids(session: Session, user: User) -> set[int]:
+    if user.role != UserRole.BASE_SUPERVISOR:
+        return set()
+    rows = session.exec(
+        select(CompanyBase.base_id)
+        .join(UserCompanyBaseLink, UserCompanyBaseLink.company_base_id == CompanyBase.id)
+        .where(UserCompanyBaseLink.user_id == user.id)
+    ).all()
+    allowed_base_ids = set(rows)
+    if allowed_base_ids:
+        return allowed_base_ids
+    legacy_base_ids = {b.id for b in user.bases if b.id is not None}
+    if not legacy_base_ids and user.base_id is not None:
+        legacy_base_ids = {user.base_id}
+    return legacy_base_ids
+
+
+def supervisor_can_access_request(session: Session, user: User, request: TravelRequest) -> bool:
+    if user.role == UserRole.LOGISTICS_MANAGER:
+        return True
+    if user.role != UserRole.BASE_SUPERVISOR:
+        return False
+    return session.exec(
+        select(CompanyBase.id)
+        .join(UserCompanyBaseLink, UserCompanyBaseLink.company_base_id == CompanyBase.id)
+        .where(
+            UserCompanyBaseLink.user_id == user.id,
+            CompanyBase.company_id == request.company_id,
+            CompanyBase.base_id == request.base_id,
+        )
+    ).first() is not None
 
 
 OTP_VALID_MINUTES = 5
@@ -138,7 +177,7 @@ def create_otp_challenge(
 def request_otp(session: Session, user: User, request: TravelRequest) -> str:
     if user.role != UserRole.PARTNER_REQUESTER:
         raise DomainError("Somente parceiro pode solicitar OTP.")
-    ensure_user_scope(user, request)
+    ensure_user_scope(session, user, request)
     if request.status != RequestStatus.CONFIRMED:
         raise DomainError("OTP apenas para pedido confirmado.")
     if not _get_operational_confirmation(session, request.id):
@@ -150,7 +189,7 @@ def request_otp(session: Session, user: User, request: TravelRequest) -> str:
 def resend_otp(session: Session, user: User, request: TravelRequest) -> str:
     if user.role != UserRole.PARTNER_REQUESTER:
         raise DomainError("Somente parceiro pode solicitar OTP.")
-    ensure_user_scope(user, request)
+    ensure_user_scope(session, user, request)
     if request.status != RequestStatus.CONFIRMED:
         raise DomainError("OTP apenas para pedido confirmado.")
     if not _get_operational_confirmation(session, request.id):
@@ -254,7 +293,18 @@ def create_request(session: Session, user: User, payload: TravelRequestCreate) -
     log_event(session, request.id, user.id, "request_submitted", f"protocol={request.protocol}")
 
     supervisors = session.exec(
-        select(User).where(and_(User.role == UserRole.BASE_SUPERVISOR, User.base_id == request.base_id, User.is_active == True))
+        select(User)
+        .join(UserCompanyBaseLink, UserCompanyBaseLink.user_id == User.id)
+        .join(CompanyBase, CompanyBase.id == UserCompanyBaseLink.company_base_id)
+        .where(
+            and_(
+                User.role == UserRole.BASE_SUPERVISOR,
+                User.is_active == True,
+                CompanyBase.company_id == request.company_id,
+                CompanyBase.base_id == request.base_id,
+            )
+        )
+        .distinct()
     ).all()
     for sup in supervisors:
         send_email_notification(
@@ -295,7 +345,7 @@ def compute_sla(request: TravelRequest, base: Base, session: Optional[Session] =
 def triage_request(session: Session, user: User, request: TravelRequest, payload: TriageDecisionPayload):
     if user.role not in (UserRole.BASE_SUPERVISOR, UserRole.LOGISTICS_MANAGER):
         raise DomainError("Perfil sem permissão para triagem.")
-    ensure_user_scope(user, request)
+    ensure_user_scope(session, user, request)
 
     if request.status not in (RequestStatus.SUBMITTED, RequestStatus.TRIAGE, RequestStatus.CONFIRMED):
         raise DomainError("Pedido fora de status para triagem ou edição.")
@@ -360,7 +410,7 @@ def triage_request(session: Session, user: User, request: TravelRequest, payload
 def propose_change(session: Session, user: User, request: TravelRequest, payload: TravelRequestCreate):
     if user.role != UserRole.PARTNER_REQUESTER:
         raise DomainError("Apenas parceiro pode propor alteração.")
-    ensure_user_scope(user, request)
+    ensure_user_scope(session, user, request)
 
     if request.status not in (RequestStatus.SUBMITTED, RequestStatus.TRIAGE, RequestStatus.CONFIRMED):
         raise DomainError("Status atual não permite alteração.")
@@ -391,7 +441,7 @@ def propose_change(session: Session, user: User, request: TravelRequest, payload
 def sign_acceptance(session: Session, user: User, request: TravelRequest, code: str, ip: str, user_agent: str) -> Acceptance:
     if user.role != UserRole.PARTNER_REQUESTER:
         raise DomainError("Somente parceiro pode assinar.")
-    ensure_user_scope(user, request)
+    ensure_user_scope(session, user, request)
     if request.status != RequestStatus.CONFIRMED:
         raise DomainError("Aceite somente para pedido confirmado.")
 
@@ -470,7 +520,7 @@ def can_partner_cancel_request(session: Session, request: TravelRequest) -> bool
 def cancel_request(session: Session, user: User, request: TravelRequest, reason: str | None = None) -> TravelRequest:
     if user.role != UserRole.PARTNER_REQUESTER:
         raise DomainError("Somente parceiro pode cancelar.")
-    ensure_user_scope(user, request)
+    ensure_user_scope(session, user, request)
 
     if request.status in (RequestStatus.SUBMITTED, RequestStatus.TRIAGE):
         pass
@@ -498,7 +548,7 @@ def cancel_request(session: Session, user: User, request: TravelRequest, reason:
 def dispatch_trip(session: Session, user: User, request: TravelRequest, driver_id: int, vehicle_id: int, planned_departure_at: datetime) -> Dispatch:
     if user.role not in (UserRole.BASE_SUPERVISOR, UserRole.LOGISTICS_MANAGER):
         raise DomainError("Perfil sem permissao de despacho.")
-    ensure_user_scope(user, request)
+    ensure_user_scope(session, user, request)
     if request.status != RequestStatus.ACCEPTED:
         raise DomainError("Despacho exige aceite assinado.")
 
@@ -585,7 +635,7 @@ def complete_trip(
 ) -> Document:
     if user.role not in (UserRole.BASE_SUPERVISOR, UserRole.LOGISTICS_MANAGER):
         raise DomainError("Perfil sem permissao de conclusao.")
-    ensure_user_scope(user, request)
+    ensure_user_scope(session, user, request)
     if request.status != RequestStatus.IN_EXECUTION:
         raise DomainError("A viagem precisa estar em execucao.")
 

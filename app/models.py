@@ -76,6 +76,11 @@ class CompanyBase(SQLModel, table=True):
     contract_sla_minutes: Optional[int] = None
 
 
+class UserCompanyBaseLink(SQLModel, table=True):
+    user_id: int = Field(foreign_key="user.id", primary_key=True)
+    company_base_id: int = Field(foreign_key="companybase.id", primary_key=True)
+
+
 class User(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     full_name: str

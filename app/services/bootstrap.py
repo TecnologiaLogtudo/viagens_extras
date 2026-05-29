@@ -5,8 +5,7 @@ from pathlib import Path
 import pandas as pd
 from sqlmodel import Session, select
 
-from app.auth import hash_password
-from app.models import Base, Company, CompanyBase, User, UserBaseLink, UserRole
+from app.models import Base, Company, CompanyBase, User, UserCompanyBaseLink, UserRole
 
 
 BASES_XLSX = Path("Bases operacionais.xlsx")
@@ -14,15 +13,6 @@ BASES_XLSX = Path("Bases operacionais.xlsx")
 
 def _placeholder_cnpj(index: int) -> str:
     return f"00.000.000/0001-{index:02d}"
-
-
-def _default_password(role: UserRole) -> str:
-    return {
-        UserRole.PARTNER_REQUESTER: "parceiro123",
-        UserRole.BASE_SUPERVISOR: "supervisor123",
-        UserRole.LOGISTICS_MANAGER: "gerente123",
-        UserRole.FINANCE_READONLY: "financeiro123",
-    }.get(role, "logtudo123")
 
 
 def seed_catalog_from_workbook(session: Session, bases_path: Path | str = BASES_XLSX) -> None:
@@ -96,85 +86,33 @@ def seed_catalog_from_workbook(session: Session, bases_path: Path | str = BASES_
             session.add(existing_link)
         seen_links.add(link_key)
 
-    session.flush()
+    session.commit()
 
-    first_company_name = company_names[0] if company_names else None
-    first_base = next(iter(bases.values()), None)
 
-    partner = session.exec(select(User).where(User.email == "parceiro@logtudo.local")).first()
-    if first_company_name:
-        company = companies[first_company_name]
-        if not partner:
-            partner = User(
-                full_name="Ana Parceira",
-                email="parceiro@logtudo.local",
-                role=UserRole.PARTNER_REQUESTER,
-                company_name=company.name,
-                company_id=company.id,
-                password_hash=hash_password(_default_password(UserRole.PARTNER_REQUESTER)),
-            )
-            session.add(partner)
-        else:
-            partner.company_id = company.id
-            partner.company_name = company.name
-            partner.role = UserRole.PARTNER_REQUESTER
-            if not partner.password_hash:
-                partner.password_hash = hash_password(_default_password(UserRole.PARTNER_REQUESTER))
-            session.add(partner)
+def migrate_supervisor_company_base_links(session: Session) -> None:
+    supervisors = session.exec(select(User).where(User.role == UserRole.BASE_SUPERVISOR)).all()
+    for supervisor in supervisors:
+        legacy_base_ids = [base.id for base in supervisor.bases if base.id is not None]
+        if supervisor.base_id is not None and supervisor.base_id not in legacy_base_ids:
+            legacy_base_ids.append(supervisor.base_id)
 
-    supervisor = session.exec(select(User).where(User.email == "supervisor@logtudo.local")).first()
-    if first_base:
-        if not supervisor:
-            supervisor = User(
-                full_name="Bruno Supervisor",
-                email="supervisor@logtudo.local",
-                role=UserRole.BASE_SUPERVISOR,
-                company_name="Logtudo",
-                base_id=first_base.id,
-                password_hash=hash_password(_default_password(UserRole.BASE_SUPERVISOR)),
-            )
-            session.add(supervisor)
-            session.flush()
-        else:
-            supervisor.role = UserRole.BASE_SUPERVISOR
-            supervisor.company_name = "Logtudo"
-            supervisor.base_id = first_base.id
-            if not supervisor.password_hash:
-                supervisor.password_hash = hash_password(_default_password(UserRole.BASE_SUPERVISOR))
-            session.add(supervisor)
-        existing_link = session.exec(
-            select(UserBaseLink).where(
-                UserBaseLink.user_id == supervisor.id,
-                UserBaseLink.base_id == first_base.id,
-            )
-        ).first()
-        if not existing_link:
-            session.add(UserBaseLink(user_id=supervisor.id, base_id=first_base.id))
-
-    for email, role, full_name, company_name in (
-        ("gerente@logtudo.local", UserRole.LOGISTICS_MANAGER, "Carla Gerente", "Logtudo"),
-        ("financeiro@logtudo.local", UserRole.FINANCE_READONLY, "Diego Financeiro", "Logtudo"),
-    ):
-        user = session.exec(select(User).where(User.email == email)).first()
-        if not user:
-            session.add(
-                User(
-                    full_name=full_name,
-                    email=email,
-                    role=role,
-                    company_name=company_name,
-                    password_hash=hash_password(_default_password(role)),
+        for base_id in legacy_base_ids:
+            company_base_links = session.exec(select(CompanyBase).where(CompanyBase.base_id == base_id)).all()
+            if len(company_base_links) != 1:
+                continue
+            company_base = company_base_links[0]
+            existing_link = session.exec(
+                select(UserCompanyBaseLink).where(
+                    UserCompanyBaseLink.user_id == supervisor.id,
+                    UserCompanyBaseLink.company_base_id == company_base.id,
                 )
-            )
-        else:
-            user.role = role
-            user.company_name = company_name
-            if not user.password_hash:
-                user.password_hash = hash_password(_default_password(role))
-            session.add(user)
+            ).first()
+            if not existing_link:
+                session.add(UserCompanyBaseLink(user_id=supervisor.id, company_base_id=company_base.id))
 
     session.commit()
 
 
 def seed_runtime_data(session: Session) -> None:
     seed_catalog_from_workbook(session)
+    migrate_supervisor_company_base_links(session)

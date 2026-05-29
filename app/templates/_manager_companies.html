@@ -18,17 +18,15 @@
     </summary>
     <div style="padding:0.5rem 1rem;">
       <ul>
-        {% set found = false %}
-        {% for cb in company_base_info if cb.company_id == c.id %}
-          {% for b in bases if b.id == cb.base_id %}
-            {% set found = true %}
-            <li>
-              <strong>{{ b.name }} - {{ b.location or 'Local não informado' }}</strong>
-              <span style="color:#666">— SLA contratual: {{ cb.contract_sla_minutes or b.sla_minutes }} min</span>
-            </li>
-          {% endfor %}
+        {% set company_bases = company_base_meta_by_company_id.get(c.id, []) %}
+        {% for item in company_bases %}
+          {% set b = item.base %}
+          <li>
+            <strong>{{ b.name }} - {{ b.location or 'Local não informado' }}</strong>
+            <span style="color:#666">— SLA contratual: {{ item.contract_sla_minutes or b.sla_minutes }} min</span>
+          </li>
         {% endfor %}
-        {% if not found %}
+        {% if not company_bases %}
         {% endif %}
       </ul>
     </div>
