@@ -31,6 +31,7 @@
       {% else %}
         {% if user.role.value in ['base_supervisor', 'logistics_manager'] %}
           <a href="/empresa/operacoes">Operações</a>
+          <a href="/empresa/motoristas">Motoristas</a>
         {% endif %}
         {% if user.role.value in ['finance_readonly', 'logistics_manager'] %}
           <a href="/empresa/financeiro">Financeiro</a>
@@ -96,6 +97,7 @@
       const onDriverChanged = function () {
         if (role !== "base_supervisor" && role !== "logistics_manager") return;
         queueRefresh("#operations-requests", "/empresa/operacoes/fragments/requests");
+        queueRefresh("#drivers-list", "/empresa/motoristas/fragments/list");
         if (document.querySelector("#supervisor-panel")) {
           const selectedId = activeSupervisorPanel();
           const qs = selectedId ? "?selected_request_id=" + encodeURIComponent(selectedId) : "";
@@ -104,11 +106,17 @@
       };
 
       const onManagerChanged = function () {
-        if (role !== "logistics_manager") return;
-        queueRefresh("#manager-supervisors", "/empresa/gerencial/fragments/supervisors");
-        queueRefresh("#manager-partners", "/empresa/gerencial/fragments/partners");
-        queueRefresh("#manager-bases", "/empresa/gerencial/fragments/bases");
-        queueRefresh("#manager-companies", "/empresa/gerencial/fragments/companies");
+        if (role === "logistics_manager") {
+          queueRefresh("#manager-supervisors", "/empresa/gerencial/fragments/supervisors");
+          queueRefresh("#manager-partners", "/empresa/gerencial/fragments/partners");
+          queueRefresh("#manager-bases", "/empresa/gerencial/fragments/bases");
+          queueRefresh("#manager-companies", "/empresa/gerencial/fragments/companies");
+          queueRefresh("#manager-drivers", "/empresa/gerencial/fragments/drivers");
+        }
+        if (role === "base_supervisor" || role === "logistics_manager") {
+          queueRefresh("#operations-drivers", "/empresa/operacoes/fragments/drivers");
+          queueRefresh("#drivers-list", "/empresa/motoristas/fragments/list");
+        }
       };
 
       const stream = new EventSource("/events/stream");

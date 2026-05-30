@@ -5,6 +5,7 @@ from pathlib import Path
 import pandas as pd
 from sqlmodel import Session, select
 
+from app.auth import hash_password
 from app.models import Base, Company, CompanyBase, User, UserCompanyBaseLink, UserRole
 
 
@@ -113,6 +114,32 @@ def migrate_supervisor_company_base_links(session: Session) -> None:
     session.commit()
 
 
+def seed_manager_user(session: Session) -> None:
+    manager = session.exec(select(User).where(User.email == "gerente@logtudo.local")).first()
+    if manager:
+        manager.full_name = "Gerente Logtudo"
+        manager.role = UserRole.LOGISTICS_MANAGER
+        manager.company_name = "Logtudo"
+        manager.password_hash = hash_password("gerente123")
+        manager.is_active = True
+        session.add(manager)
+        session.commit()
+        return
+
+    session.add(
+        User(
+            full_name="Gerente Logtudo",
+            email="gerente@logtudo.local",
+            role=UserRole.LOGISTICS_MANAGER,
+            company_name="Logtudo",
+            password_hash=hash_password("gerente123"),
+            is_active=True,
+        )
+    )
+    session.commit()
+
+
 def seed_runtime_data(session: Session) -> None:
     seed_catalog_from_workbook(session)
     migrate_supervisor_company_base_links(session)
+    seed_manager_user(session)

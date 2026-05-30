@@ -423,7 +423,9 @@ th, td {
 }
 
 #manager-supervisors th:nth-child(2),
-#manager-supervisors td:nth-child(2) {
+#manager-supervisors td:nth-child(2),
+#manager-supervisors th:nth-child(4),
+#manager-supervisors td:nth-child(4) {
   min-width: 80px; /* Altere este valor para a largura desejada */
 }
 
@@ -432,9 +434,13 @@ th, td {
   min-width: 150px; /* Altere este valor para a largura desejada */
 }
 
-#manager-supervisors th:nth-child(4),
-#manager-supervisors td:nth-child(4) {
-  min-width: 80px; /* Altere este valor para a largura desejada */
+#manager-partners th:first-child,
+#manager-partners td:first-child,
+#manager-partners th:nth-child(2),
+#manager-partners td:nth-child(2),
+#manager-partners th:nth-child(4),
+#manager-partners td:nth-child(4) {
+  min-width: 75px;
 }
 
 th {

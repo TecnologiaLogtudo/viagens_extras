@@ -1,0 +1,50 @@
+{% extends 'base.html' %}
+{% block content %}
+<section class="hero">
+  <h2>Empresa | Motoristas</h2>
+  <p>Consulta dos motoristas cadastrados com base, telefone, categoria do veículo e placa.</p>
+  {% if message %}<p class="pill green">{{ message }}</p>{% endif %}
+  {% if error %}<p class="pill red">{{ error }}</p>{% endif %}
+</section>
+
+{% if can_manage_drivers %}
+<section class="panel">
+  <h3>{{ "Editar Motorista" if edit_driver else "Cadastrar Motorista" }}</h3>
+  <form class="form-grid" method="post" action="/empresa/motoristas/save">
+    {% if edit_driver %}
+    <input type="hidden" name="driver_id" value="{{ edit_driver.id }}" />
+    {% endif %}
+    <label class="full">Nome
+      <input name="name" value="{{ edit_driver.name if edit_driver else '' }}" required />
+    </label>
+    <label>Telefone
+      <input name="phone" value="{{ edit_driver.phone if edit_driver else '' }}" placeholder="71 99876-5213" />
+    </label>
+    <label>Base
+      <select name="base_id" required>
+        <option value="">Selecione</option>
+        {% for base in bases %}
+        <option value="{{ base.id }}"{% if edit_driver and edit_driver.base_id == base.id %} selected{% endif %}>
+          {{ base.name }} - {{ base.location }}
+        </option>
+        {% endfor %}
+      </select>
+    </label>
+    <label class="full">
+      <input type="checkbox" name="active" value="1" {% if not edit_driver or edit_driver.active %}checked{% endif %} />
+      <span>Motorista ativo</span>
+    </label>
+    <button type="submit">{{ "Salvar alterações" if edit_driver else "Cadastrar Motorista" }}</button>
+    {% if edit_driver %}
+    <a class="pill" href="/empresa/motoristas">Cancelar edição</a>
+    {% endif %}
+  </form>
+</section>
+{% endif %}
+
+<section class="panel">
+  <div id="drivers-list">
+    {% include '_drivers_table.html' %}
+  </div>
+</section>
+{% endblock %}

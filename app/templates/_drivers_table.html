@@ -1,0 +1,47 @@
+<div id="{{ table_id }}" class="table-wrap">
+  {% if can_manage_drivers %}
+  <form method="post" action="/empresa/motoristas/bulk-delete" onsubmit="return confirm('Excluir os motoristas selecionados?');">
+  {% endif %}
+  <table>
+    <thead>
+      <tr>
+        {% if can_manage_drivers %}<th></th>{% endif %}
+        <th>Nome</th>
+        <th>Telefone</th>
+        <th>Categoria do veículo</th>
+        <th>Base</th>
+        <th>Placa</th>
+        {% if can_manage_drivers %}<th>Ações</th>{% endif %}
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in driver_rows %}
+      <tr>
+        {% if can_manage_drivers %}
+        <td><input type="checkbox" name="driver_ids" value="{{ row.id }}" /></td>
+        {% endif %}
+        <td>{{ row.name }}</td>
+        <td>{{ row.phone or '—' }}</td>
+        <td>{{ row.vehicle_type or '—' }}</td>
+        <td>{{ row.base_name }}{% if row.base_location %} — {{ row.base_location }}{% endif %}</td>
+        <td>{{ row.plate or '—' }}</td>
+        {% if can_manage_drivers %}
+        <td>
+          <a class="pill" href="/empresa/motoristas?edit_driver_id={{ row.id }}">Editar</a>
+        </td>
+        {% endif %}
+      </tr>
+      {% else %}
+      <tr>
+        <td colspan="{{ 7 if can_manage_drivers else 5 }}" class="muted">{{ empty_message|default('Nenhum motorista cadastrado.') }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% if can_manage_drivers %}
+  <div class="driver-actions" style="margin-top: 0.75rem;">
+    <button type="submit" class="pill red">Excluir selecionados</button>
+  </div>
+  </form>
+  {% endif %}
+</div>

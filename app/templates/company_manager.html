@@ -108,11 +108,11 @@
       </label>
       <fieldset class="full grouped-select">
         <legend>Bases sob controle</legend>
-        <p class="muted" style="margin: 0 0 0.5rem 0;">Marque as bases que este parceiro poderá operar. A empresa será identificada automaticamente pelas bases selecionadas.</p>
+        <p class="muted" style="margin: 0 0 0.5rem 0;">Marque os vínculos de base que este parceiro poderá operar. A empresa será identificada automaticamente pelos vínculos selecionados; use vínculos da mesma empresa.</p>
         {% if companies %}
         <div class="company-tree">
           {% for company in companies %}
-          {% set company_bases = company_bases_by_company_id.get(company.id, []) %}
+          {% set company_bases = company_base_meta_by_company_id.get(company.id, []) %}
           <details class="company-group">
             <summary>
               <strong>{{ company.name }}</strong>
@@ -130,14 +130,14 @@
                 <label class="base-choice">
                   <input
                     type="checkbox"
-                    name="base_ids"
+                    name="company_base_link_ids"
                     value="{{ base.id }}"
                     data-company-id="{{ company.id }}"
-                    {% if base.id in edit_partner_base_ids %}checked{% endif %}
+                    {% if base.id in edit_partner_company_base_link_ids %}checked{% endif %}
                   />
                   <span class="base-choice-text">
-                    <strong>{{ base.name }}</strong>
-                    <span>{{ base.location or 'Local não informado' }}</span>
+                    <strong>{{ base.base.name }}</strong>
+                    <span>{{ base.base.location or 'Local não informado' }}</span>
                   </span>
                 </label>
                 {% endfor %}
@@ -234,6 +234,13 @@
   </section>
 </div>
 
+<section class="panel" style="margin-top: 1rem;">
+  <h3>Motoristas</h3>
+  <p class="muted" style="margin: 0 0 0.75rem 0;">Lista completa de motoristas com categoria, base e placa vinculada.</p>
+  {% set table_id = 'manager-drivers' %}
+  {% include '_drivers_table.html' %}
+</section>
+
 <script>
   (function () {
     const groups = document.querySelectorAll(".company-group");
@@ -241,7 +248,7 @@
 
     const updateCompanyState = function (group) {
       const companyId = group.dataset.companyId;
-      const children = group.querySelectorAll(`input[type="checkbox"][name="company_base_link_ids"][data-company-id="${companyId}"]`);
+      const children = group.querySelectorAll(`input[type="checkbox"][data-company-id="${companyId}"]:not([data-company-toggle])`);
       const master = group.querySelector(`input[type="checkbox"][data-company-toggle="${companyId}"]`);
       if (!master) return;
 
@@ -260,7 +267,7 @@
       group.dataset.companyId = companyId;
 
       const master = group.querySelector(`input[type="checkbox"][data-company-toggle="${companyId}"]`);
-      const children = group.querySelectorAll(`input[type="checkbox"][name="company_base_link_ids"][data-company-id="${companyId}"]`);
+      const children = group.querySelectorAll(`input[type="checkbox"][data-company-id="${companyId}"]:not([data-company-toggle])`);
 
       master?.addEventListener("change", function () {
         children.forEach(function (checkbox) {

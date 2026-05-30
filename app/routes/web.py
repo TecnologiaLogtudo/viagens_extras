@@ -82,6 +82,33 @@ def _format_phone_br(raw_phone: str) -> str:
     return f"{digits[:2]} {digits[2:6]}-{digits[6:]}"
 
 
+def _form_int_list(form_data, key: str) -> list[int]:
+    raw_values = form_data.getlist(key)
+    parsed_values: list[int] = []
+    for raw_value in raw_values:
+        text = str(raw_value).strip()
+        if not text:
+            continue
+        if text.startswith("[") and text.endswith("]"):
+            text = text[1:-1]
+        for part in re.split(r"[,\s]+", text):
+            part = part.strip()
+            if part:
+                parsed_values.append(int(part))
+    if parsed_values:
+        return parsed_values
+
+    raw_value = form_data.get(key)
+    if raw_value is None:
+        return []
+    text = str(raw_value).strip()
+    if not text:
+        return []
+    if text.startswith("[") and text.endswith("]"):
+        text = text[1:-1]
+    return [int(part.strip()) for part in re.split(r"[,\s]+", text) if part.strip()]
+
+
 def _role_home(user: User) -> str:
     if user.role == UserRole.PARTNER_REQUESTER:
         return "/partner"
@@ -199,9 +226,40 @@ def _base_context(session: Session, user: User) -> dict:
         "roles": UserRole,
         "status": RequestStatus,
         "driver_status": DriverActivityStatus,
+        "can_manage_drivers": False,
+        "driver_rows": _driver_rows(session, supervisor_allowed_base_ids(session, user) if user.role == UserRole.BASE_SUPERVISOR else None)
+        if user.role in (UserRole.BASE_SUPERVISOR, UserRole.LOGISTICS_MANAGER)
+        else [],
         "can_access_finance": can_access_finance(user),
         "can_access_operations": can_access_operations(user),
     }
+
+
+def _driver_rows(session: Session, base_ids: set[int] | list[int] | None = None) -> list[dict]:
+    query = select(Driver, Base, Vehicle).join(Base, Driver.base_id == Base.id).outerjoin(Vehicle, Driver.vehicle_id == Vehicle.id)
+    if base_ids is not None:
+        base_id_list = sorted(set(base_ids))
+        if not base_id_list:
+            return []
+        query = query.where(Driver.base_id.in_(base_id_list))
+
+    rows = []
+    for driver, base, vehicle in session.exec(query.order_by(Driver.name, Base.name, Vehicle.plate)).all():
+        rows.append(
+            {
+                "id": driver.id,
+                "name": driver.name,
+                "phone": driver.phone,
+                "base_id": driver.base_id,
+                "active": driver.active,
+                "activity_status": driver.activity_status,
+                "base_name": base.name,
+                "base_location": base.location,
+                "vehicle_type": vehicle.vehicle_type if vehicle else None,
+                "plate": vehicle.plate if vehicle else None,
+            }
+        )
+    return rows
 
 
 def _manager_context(session: Session) -> dict:
@@ -267,6 +325,8 @@ def _manager_context(session: Session) -> dict:
     return {
         "bases": bases,
         "companies": companies,
+        "driver_rows": _driver_rows(session),
+        "can_manage_drivers": True,
         "company_base_links": company_base_links,
         "base_company_ids_by_base_id": base_company_ids_by_base_id,
         "company_bases_by_company_id": company_bases_by_company_id,
@@ -314,7 +374,7 @@ def _event_matches_user(session: Session, event: EventLog, user: User) -> bool:
         "otp_sent",
     }
     if event.event_type == "manager_data_changed":
-        return user.role == UserRole.LOGISTICS_MANAGER
+        return user.role in (UserRole.LOGISTICS_MANAGER, UserRole.BASE_SUPERVISOR)
     if event.event_type == "driver_status_changed":
         if user.role not in (UserRole.BASE_SUPERVISOR, UserRole.LOGISTICS_MANAGER):
             return False
@@ -356,6 +416,32 @@ def _resolve_company_from_base_ids(session: Session, base_ids: list[int]) -> Com
 
     company_id = next(iter(common_company_ids))
     return session.get(Company, company_id)
+
+
+def _resolve_company_from_company_base_link_ids(
+    session: Session, company_base_link_ids: list[int]
+) -> tuple[Company | None, list[CompanyBase]]:
+    unique_company_base_link_ids = sorted(set(company_base_link_ids))
+    if not unique_company_base_link_ids:
+        return None, []
+
+    company_base_links = session.exec(
+        select(CompanyBase)
+        .where(CompanyBase.id.in_(unique_company_base_link_ids))
+        .order_by(CompanyBase.company_id, CompanyBase.base_id)
+    ).all()
+    if len(company_base_links) != len(unique_company_base_link_ids):
+        return None, []
+
+    company_ids = {link.company_id for link in company_base_links}
+    if len(company_ids) != 1:
+        return None, []
+
+    company = session.get(Company, next(iter(company_ids)))
+    if not company:
+        return None, []
+
+    return company, company_base_links
 
 
 @router.get("/", response_class=HTMLResponse)
@@ -615,6 +701,155 @@ def company_operations(
     )
 
 
+@router.get("/empresa/motoristas", response_class=HTMLResponse)
+def company_drivers(
+    request: Request,
+    session: Session = Depends(get_session),
+):
+    user = _require_roles_or_redirect(request, session, (UserRole.BASE_SUPERVISOR, UserRole.LOGISTICS_MANAGER))
+    if isinstance(user, RedirectResponse):
+        return user
+    can_manage_drivers = user.role == UserRole.LOGISTICS_MANAGER
+    allowed_base_ids = supervisor_allowed_base_ids(session, user) if user.role == UserRole.BASE_SUPERVISOR else None
+    driver_rows = _driver_rows(session, allowed_base_ids)
+    if can_manage_drivers:
+        bases = session.exec(
+            select(Base).where(Base.active == True).order_by(Base.name, Base.location)
+        ).all()
+    else:
+        bases = []
+    edit_driver = None
+    if can_manage_drivers:
+        edit_driver_id = request.query_params.get("edit_driver_id")
+        if edit_driver_id and edit_driver_id.isdigit():
+            edit_driver = session.get(Driver, int(edit_driver_id))
+    message = request.query_params.get("message")
+    error = request.query_params.get("error")
+    return templates.TemplateResponse(
+        "company_drivers.html",
+        {
+            "request": request,
+            "user": user,
+            "driver_rows": driver_rows,
+            "bases": bases,
+            "edit_driver": edit_driver,
+            "can_manage_drivers": can_manage_drivers,
+            "message": message,
+            "error": error,
+            "title": "Empresa | Motoristas",
+        },
+    )
+
+
+@router.post("/empresa/motoristas/save")
+def save_driver(
+    request: Request,
+    driver_id: int | None = Form(None),
+    name: str = Form(...),
+    phone: str = Form(default=""),
+    base_id: int = Form(...),
+    active: str | None = Form(default=None),
+    session: Session = Depends(get_session),
+):
+    user = _require_roles_or_redirect(request, session, (UserRole.LOGISTICS_MANAGER,))
+    if isinstance(user, RedirectResponse):
+        return user
+
+    normalized_name = name.strip()
+    phone_digits = re.sub(r"\D", "", phone.strip())
+    if not normalized_name:
+        return _redirect(f"/empresa/motoristas?error={quote_plus('Nome é obrigatório')}")
+    if phone_digits and not PHONE_BR_DIGITS_RE.match(phone_digits):
+        return _redirect(
+            f"/empresa/motoristas?error={quote_plus('Telefone inválido. Use DDD com 10 ou 11 dígitos.')}"
+        )
+
+    base = session.get(Base, base_id)
+    if not base or not base.active:
+        return _redirect(f"/empresa/motoristas?error={quote_plus('Base inválida')}")
+
+    target_driver = None
+    if driver_id is not None:
+        target_driver = session.get(Driver, driver_id)
+        if not target_driver:
+            return _redirect(f"/empresa/motoristas?error={quote_plus('Motorista inválido')}")
+    else:
+        target_driver = session.exec(
+            select(Driver).where(and_(Driver.name == normalized_name, Driver.base_id == base.id))
+        ).first()
+
+    phone_value = _format_phone_br(phone_digits) if phone_digits else ""
+    is_active = active is not None
+    if target_driver:
+        target_driver.name = normalized_name
+        target_driver.phone = phone_value
+        target_driver.base_id = base.id
+        target_driver.active = is_active
+        session.add(target_driver)
+        session.add(
+            EventLog(
+                actor_user_id=user.id,
+                event_type="manager_data_changed",
+                payload=f"driver_updated|driver_id={target_driver.id}",
+            )
+        )
+        session.commit()
+        return _redirect(f"/empresa/motoristas?message={quote_plus('Motorista atualizado com sucesso')}")
+
+    new_driver = Driver(
+        name=normalized_name,
+        phone=phone_value,
+        base_id=base.id,
+        active=is_active,
+    )
+    session.add(new_driver)
+    session.flush()
+    session.add(
+        EventLog(
+            actor_user_id=user.id,
+            event_type="manager_data_changed",
+            payload=f"driver_created|driver_id={new_driver.id}",
+        )
+    )
+    session.commit()
+    return _redirect(f"/empresa/motoristas?message={quote_plus('Motorista cadastrado com sucesso')}")
+
+
+@router.post("/empresa/motoristas/bulk-delete")
+def bulk_delete_drivers(
+    request: Request,
+    driver_ids: List[int] = Form(default=[]),
+    session: Session = Depends(get_session),
+):
+    user = _require_roles_or_redirect(request, session, (UserRole.LOGISTICS_MANAGER,))
+    if isinstance(user, RedirectResponse):
+        return user
+
+    unique_driver_ids = sorted(set(driver_ids))
+    if not unique_driver_ids:
+        return _redirect(f"/empresa/motoristas?error={quote_plus('Selecione ao menos um motorista')}")
+
+    deleted_count = 0
+    for driver_id in unique_driver_ids:
+        driver = session.get(Driver, driver_id)
+        if not driver:
+            continue
+        session.delete(driver)
+        deleted_count += 1
+
+    session.add(
+        EventLog(
+            actor_user_id=user.id,
+            event_type="manager_data_changed",
+            payload=f"driver_bulk_deleted|count={deleted_count}",
+        )
+    )
+    session.commit()
+    return _redirect(
+        f"/empresa/motoristas?message={quote_plus(f'{deleted_count} motorista(s) excluído(s) com sucesso')}"
+    )
+
+
 @router.get("/empresa/gerencial", response_class=HTMLResponse)
 def company_manager(
     request: Request,
@@ -627,7 +862,7 @@ def company_manager(
     edit_supervisor = None
     edit_partner = None
     edit_supervisor_company_base_link_ids = []
-    edit_partner_base_ids = []
+    edit_partner_company_base_link_ids = []
 
     edit_supervisor_id = request.query_params.get("edit_supervisor_id")
     if edit_supervisor_id and edit_supervisor_id.isdigit():
@@ -649,7 +884,19 @@ def company_manager(
         candidate = session.get(User, int(edit_partner_id))
         if candidate and candidate.role == UserRole.PARTNER_REQUESTER:
             edit_partner = candidate
-            edit_partner_base_ids = [b.id for b in edit_partner.bases]
+            partner_base_ids = [b.id for b in edit_partner.bases if b.id is not None]
+            if edit_partner.company_id is not None and partner_base_ids:
+                edit_partner_company_base_link_ids = [
+                    link.id
+                    for link in session.exec(
+                        select(CompanyBase)
+                        .where(
+                            CompanyBase.company_id == edit_partner.company_id,
+                            CompanyBase.base_id.in_(sorted(set(partner_base_ids))),
+                        )
+                        .order_by(CompanyBase.base_id)
+                    ).all()
+                ]
 
     edit_base_id = request.query_params.get("edit_base_id")
     edit_base = None
@@ -680,7 +927,7 @@ def company_manager(
             "edit_supervisor": edit_supervisor,
             "edit_partner": edit_partner,
             "edit_supervisor_company_base_link_ids": edit_supervisor_company_base_link_ids,
-            "edit_partner_base_ids": edit_partner_base_ids,
+            "edit_partner_company_base_link_ids": edit_partner_company_base_link_ids,
             "edit_base": edit_base,
             "edit_base_company_ids": edit_base_company_ids,
             "edit_company": edit_company,
@@ -689,35 +936,46 @@ def company_manager(
 
 
 @router.post("/empresa/gerencial/supervisors/new")
-def register_supervisor(
+async def register_supervisor(
     request: Request,
-    full_name: str = Form(...),
-    email: str = Form(...),
-    phone: str = Form(default=""),
-    password: str = Form(...),
-    company_base_link_ids: List[int] = Form(...),
-    supervisor_id: int | None = Form(None),
     session: Session = Depends(get_session),
 ):
     user = _require_roles_or_redirect(request, session, (UserRole.LOGISTICS_MANAGER,))
     if isinstance(user, RedirectResponse):
         return user
-        
-    if len(company_base_link_ids) == 0:
-        return _redirect("/empresa/gerencial?error=Selecione+ao+menos+uma+base+para+o+supervisor")
 
-    normalized_email = email.strip().lower()
-    phone_digits = re.sub(r"\D", "", phone.strip())
+    form = await request.form()
+    full_name = str(form.get("full_name", "")).strip()
+    email = str(form.get("email", "")).strip()
+    phone = str(form.get("phone", "")).strip()
+    password = str(form.get("password", ""))
+    supervisor_id_raw = form.get("supervisor_id")
+    supervisor_id = int(supervisor_id_raw) if str(supervisor_id_raw).strip().isdigit() else None
+    company_base_link_ids = _form_int_list(form, "company_base_link_ids")
+    if not company_base_link_ids:
+        base_ids = _form_int_list(form, "base_ids")
+        if base_ids:
+            company_base_link_ids = [
+                link.id
+                for link in session.exec(select(CompanyBase).where(CompanyBase.base_id.in_(sorted(set(base_ids))))).all()
+                if link.id is not None
+            ]
+
+    if len(company_base_link_ids) == 0:
+        return _redirect(f"/empresa/gerencial?error={quote_plus('Selecione ao menos uma base para o supervisor')}")
+
+    normalized_email = email.lower()
+    phone_digits = re.sub(r"\D", "", phone)
     normalized_phone = _format_phone_br(phone_digits) if phone_digits else None
     existing = session.exec(select(User).where(User.email == normalized_email)).first()
     if existing and (supervisor_id is None or existing.id != supervisor_id):
-        return _redirect("/empresa/gerencial?error=Email+já+cadastrado")
+        return _redirect(f"/empresa/gerencial?error={quote_plus('Email já cadastrado')}")
 
     unique_company_base_link_ids = sorted(set(company_base_link_ids))
     if supervisor_id:
         supervisor = session.get(User, supervisor_id)
         if not supervisor or supervisor.role != UserRole.BASE_SUPERVISOR:
-            return _redirect("/empresa/gerencial?error=Supervisor+invalido")
+            return _redirect(f"/empresa/gerencial?error={quote_plus('Supervisor inválido')}")
         supervisor.full_name = full_name
         supervisor.email = normalized_email
         supervisor.phone = normalized_phone
@@ -729,12 +987,12 @@ def register_supervisor(
             select(CompanyBase).where(CompanyBase.id.in_(unique_company_base_link_ids))
         ).all()
         if len(valid_links) != len(unique_company_base_link_ids):
-            return _redirect("/empresa/gerencial?error=Base+invalida+selecionada")
+            return _redirect(f"/empresa/gerencial?error={quote_plus('Base inválida selecionada')}")
         for link in valid_links:
             session.add(UserCompanyBaseLink(user_id=supervisor.id, company_base_id=link.id))
         session.add(EventLog(actor_user_id=user.id, event_type="manager_data_changed", payload="supervisor_updated"))
         session.commit()
-        return _redirect("/empresa/gerencial?message=Supervisor+atualizado+com+sucesso")
+        return _redirect(f"/empresa/gerencial?message={quote_plus('Supervisor atualizado com sucesso')}")
 
     new_user = User(
         full_name=full_name,
@@ -750,49 +1008,69 @@ def register_supervisor(
         select(CompanyBase).where(CompanyBase.id.in_(unique_company_base_link_ids))
     ).all()
     if len(valid_links) != len(unique_company_base_link_ids):
-        return _redirect("/empresa/gerencial?error=Base+invalida+selecionada")
+        return _redirect(f"/empresa/gerencial?error={quote_plus('Base inválida selecionada')}")
     for link in valid_links:
         session.add(UserCompanyBaseLink(user_id=new_user.id, company_base_id=link.id))
         
     session.add(EventLog(actor_user_id=user.id, event_type="manager_data_changed", payload="supervisor_created"))
     session.commit()
-    return _redirect("/empresa/gerencial?message=Supervisor+cadastrado+com+sucesso")
+    return _redirect(f"/empresa/gerencial?message={quote_plus('Supervisor cadastrado com sucesso')}")
 
 
 @router.post("/empresa/gerencial/partners/new")
-def register_partner(
+async def register_partner(
     request: Request,
-    full_name: str = Form(...),
-    email: str = Form(...),
-    password: str = Form(...),
-    phone: str = Form(default=""),
-    base_ids: List[int] = Form(...),
-    partner_id: int | None = Form(None),
     session: Session = Depends(get_session),
 ):
     user = _require_roles_or_redirect(request, session, (UserRole.LOGISTICS_MANAGER,))
     if isinstance(user, RedirectResponse):
         return user
-        
-    if len(base_ids) == 0:
-        return _redirect("/empresa/gerencial?error=Selecione+ao+menos+uma+base+para+o+parceiro")
-    normalized_email = email.strip().lower()
+
+    form = await request.form()
+    full_name = str(form.get("full_name", "")).strip()
+    email = str(form.get("email", "")).strip()
+    password = str(form.get("password", ""))
+    phone = str(form.get("phone", "")).strip()
+    partner_id_raw = form.get("partner_id")
+    partner_id = int(partner_id_raw) if str(partner_id_raw).strip().isdigit() else None
+    company_base_link_ids = _form_int_list(form, "company_base_link_ids")
+    legacy_base_ids = _form_int_list(form, "base_ids")
+
+    selected_base_ids: list[int] = []
+    company: Company | None = None
+
+    if company_base_link_ids:
+        company, company_base_links = _resolve_company_from_company_base_link_ids(session, company_base_link_ids)
+        if not company:
+            return _redirect(
+                f"/empresa/gerencial?error={quote_plus('Não foi possível identificar a empresa pelos vínculos selecionados. Escolha vínculos da mesma empresa.')}"
+            )
+        selected_base_ids = sorted({link.base_id for link in company_base_links})
+    elif legacy_base_ids:
+        unique_base_ids = sorted(set(legacy_base_ids))
+        company = _resolve_company_from_base_ids(session, unique_base_ids)
+        if not company:
+            return _redirect(
+                f"/empresa/gerencial?error={quote_plus('Não foi possível identificar a empresa pelas bases selecionadas. Escolha bases da mesma empresa.')}"
+            )
+        selected_base_ids = unique_base_ids
+    else:
+        return _redirect(f"/empresa/gerencial?error={quote_plus('Selecione ao menos uma base para o parceiro')}")
+
+    normalized_email = email.lower()
     existing = session.exec(select(User).where(User.email == normalized_email)).first()
     if existing and (partner_id is None or existing.id != partner_id):
-        return _redirect("/empresa/gerencial?error=Email+já+cadastrado")
+        return _redirect(f"/empresa/gerencial?error={quote_plus('Email já cadastrado')}")
     phone_digits = re.sub(r"\D", "", phone.strip())
     if phone_digits and not PHONE_BR_DIGITS_RE.match(phone_digits):
-        return _redirect("/empresa/gerencial?error=Telefone+invalido.+Use+DDD+com+10+ou+11+digitos.")
-
-    unique_base_ids = sorted(set(base_ids))
-    company = _resolve_company_from_base_ids(session, unique_base_ids)
-    if not company:
-        return _redirect("/empresa/gerencial?error=Não+foi+possível+identificar+a+empresa+a+partir+das+bases+selecionadas")
+        return _redirect(
+            f"/empresa/gerencial?error={quote_plus('Telefone inválido. Use DDD com 10 ou 11 dígitos.')}"
+        )
 
     if partner_id:
         partner = session.get(User, partner_id)
         if not partner or partner.role != UserRole.PARTNER_REQUESTER:
-            return _redirect("/empresa/gerencial?error=Parceiro+invalido")
+            return _redirect(f"/empresa/gerencial?error={quote_plus('Parceiro inválido')}")
         partner.full_name = full_name
         partner.email = normalized_email
         partner.phone = _format_phone_br(phone_digits) if phone_digits else None
@@ -801,14 +1079,32 @@ def register_partner(
         partner.company_id = company.id
         partner.company_name = company.name
         session.exec(delete(UserBaseLink).where(UserBaseLink.user_id == partner.id))
-        for b_id in unique_base_ids:
+        for b_id in selected_base_ids:
             base = session.get(Base, b_id)
             if not base:
-                return _redirect("/empresa/gerencial?error=Base+invalida+selecionada")
+                return _redirect(f"/empresa/gerencial?error={quote_plus('Base inválida selecionada')}")
+            existing_company_base = session.exec(
+                select(CompanyBase).where(
+                    CompanyBase.company_id == company.id,
+                    CompanyBase.base_id == base.id,
+                )
+            ).first()
+            if not existing_company_base:
+                if company_base_link_ids:
+                    return _redirect(
+                        f"/empresa/gerencial?error={quote_plus('Vínculo de base inválido selecionado')}"
+                    )
+                session.add(
+                    CompanyBase(
+                        company_id=company.id,
+                        base_id=base.id,
+                        contract_sla_minutes=base.sla_minutes,
+                    )
+                )
             session.add(UserBaseLink(user_id=partner.id, base_id=b_id))
         session.add(EventLog(actor_user_id=user.id, event_type="manager_data_changed", payload="partner_updated"))
         session.commit()
-        return _redirect("/empresa/gerencial?message=Parceiro+atualizado+com+sucesso")
+        return _redirect(f"/empresa/gerencial?message={quote_plus('Parceiro atualizado com sucesso')}")
 
     new_user = User(
         full_name=full_name,
@@ -823,15 +1119,33 @@ def register_partner(
     session.add(new_user)
     session.flush()
     
-    for b_id in unique_base_ids:
+    for b_id in selected_base_ids:
         base = session.get(Base, b_id)
         if not base:
-            return _redirect("/empresa/gerencial?error=Base+invalida+selecionada")
+            return _redirect(f"/empresa/gerencial?error={quote_plus('Base inválida selecionada')}")
+        existing_company_base = session.exec(
+            select(CompanyBase).where(
+                CompanyBase.company_id == company.id,
+                CompanyBase.base_id == base.id,
+                )
+            ).first()
+        if not existing_company_base:
+            if company_base_link_ids:
+                return _redirect(f"/empresa/gerencial?error={quote_plus('Vínculo de base inválido selecionado')}")
+            session.add(
+                CompanyBase(
+                    company_id=company.id,
+                    base_id=base.id,
+                    contract_sla_minutes=base.sla_minutes,
+                )
+            )
         session.add(UserBaseLink(user_id=new_user.id, base_id=b_id))
         
     session.add(EventLog(actor_user_id=user.id, event_type="manager_data_changed", payload="partner_created_or_updated"))
     session.commit()
-    return _redirect("/empresa/gerencial?message=Parceiro+cadastrado+com+sucesso.+Vinculos+de+base+atualizados.")
+    return _redirect(
+        f"/empresa/gerencial?message={quote_plus('Parceiro cadastrado com sucesso. Vínculos de base atualizados.')}"
+    )
 
 
 @router.post("/empresa/gerencial/supervisors/{supervisor_id}/delete")
@@ -947,6 +1261,32 @@ def operations_requests_fragment(
     )
 
 
+@router.get("/empresa/operacoes/fragments/drivers", response_class=HTMLResponse)
+def operations_drivers_fragment(
+    request: Request,
+    session: Session = Depends(get_session),
+    user: User = Depends(supervisor_or_manager),
+):
+    ctx = _base_context(session, user)
+    return templates.TemplateResponse(
+        "_drivers_table.html",
+        {"request": request, "user": user, "table_id": "operations-drivers", "driver_rows": ctx.get("driver_rows", [])},
+    )
+
+
+@router.get("/empresa/motoristas/fragments/list", response_class=HTMLResponse)
+def drivers_list_fragment(
+    request: Request,
+    session: Session = Depends(get_session),
+    user: User = Depends(supervisor_or_manager),
+):
+    driver_rows = _driver_rows(session, supervisor_allowed_base_ids(session, user) if user.role == UserRole.BASE_SUPERVISOR else None)
+    return templates.TemplateResponse(
+        "_drivers_table.html",
+        {"request": request, "user": user, "table_id": "drivers-list", "driver_rows": driver_rows},
+    )
+
+
 @router.get("/empresa/operacoes/fragments/supervisor-panel", response_class=HTMLResponse)
 def operations_supervisor_panel_fragment(
     request: Request,
@@ -1024,6 +1364,21 @@ def manager_partners_fragment(
     return templates.TemplateResponse(
         "_manager_partners.html",
         {"request": request, "user": user, **ctx},
+    )
+
+
+@router.get("/empresa/gerencial/fragments/drivers", response_class=HTMLResponse)
+def manager_drivers_fragment(
+    request: Request,
+    session: Session = Depends(get_session),
+    user: User = Depends(finance_or_manager),
+):
+    if user.role != UserRole.LOGISTICS_MANAGER:
+        raise HTTPException(status_code=403, detail="Sem permissão")
+    ctx = _manager_context(session)
+    return templates.TemplateResponse(
+        "_drivers_table.html",
+        {"request": request, "user": user, "table_id": "manager-drivers", "driver_rows": ctx.get("driver_rows", [])},
     )
 
 

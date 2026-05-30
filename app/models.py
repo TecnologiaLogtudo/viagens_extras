@@ -103,9 +103,11 @@ class Driver(SQLModel, table=True):
     name: str
     phone: str = ""
     base_id: int = Field(foreign_key="base.id")
+    vehicle_id: Optional[int] = Field(default=None, foreign_key="vehicle.id")
     active: bool = True
     activity_status: DriverActivityStatus = DriverActivityStatus.AVAILABLE
     status_updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    vehicle: Optional["Vehicle"] = Relationship()
 
 
 class Vehicle(SQLModel, table=True):

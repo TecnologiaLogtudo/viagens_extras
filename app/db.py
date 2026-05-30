@@ -3,6 +3,8 @@ from pathlib import Path
 from sqlalchemy import text
 from sqlmodel import Session, SQLModel, create_engine
 
+import app.models  # noqa: F401 - ensures SQLModel metadata is populated
+
 BASE_DIR = Path(__file__).resolve().parent.parent
 DATA_DIR = BASE_DIR / "app" / "data"
 DATA_DIR.mkdir(parents=True, exist_ok=True)
@@ -17,6 +19,8 @@ def init_db() -> None:
         # Tables and columns check
         cols = conn.execute(text("PRAGMA table_info(driver)")).fetchall()
         col_names = {c[1] for c in cols}
+        if "vehicle_id" not in col_names:
+            conn.execute(text("ALTER TABLE driver ADD COLUMN vehicle_id INTEGER REFERENCES vehicle(id)"))
         if "activity_status" not in col_names:
             conn.execute(text("ALTER TABLE driver ADD COLUMN activity_status TEXT DEFAULT 'AVAILABLE'"))
         if "status_updated_at" not in col_names:
