@@ -1,6 +1,13 @@
 from __future__ import annotations
 
-import os
+from pathlib import Path
+import sys
+
+# ensure project root is importable when running this script from tools/
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
 from sqlmodel import Session
 from app.db import engine, init_db_with_seeds
 from app.services.bootstrap import seed_runtime_data, is_database_seeded

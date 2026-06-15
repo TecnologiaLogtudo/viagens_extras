@@ -9,7 +9,8 @@ from app.auth import hash_password
 from app.models import Base, Company, CompanyBase, User, UserCompanyBaseLink, UserRole
 
 
-BASES_XLSX = Path("Bases operacionais.xlsx")
+ROOT_DIR = Path(__file__).resolve().parent.parent.parent
+BASES_XLSX = ROOT_DIR / "Bases operacionais.xlsx"
 
 def is_database_seeded(session: Session) -> bool:
     """Return True when the database already has the expected baseline seed state.
