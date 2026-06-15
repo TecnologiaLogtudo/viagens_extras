@@ -66,6 +66,8 @@ def init_db() -> None:
                 conn.execute(text("ALTER TABLE 'user' ADD COLUMN job_title TEXT"))
             if "address" not in user_col_names:
                 conn.execute(text("ALTER TABLE 'user' ADD COLUMN address TEXT"))
+            if "min_advance_minutes" not in user_col_names:
+                conn.execute(text("ALTER TABLE 'user' ADD COLUMN min_advance_minutes INTEGER DEFAULT 0"))
 
             otp_cols = conn.execute(text("PRAGMA table_info(otpchallenge)")).fetchall()
             otp_col_names = {c[1] for c in otp_cols}

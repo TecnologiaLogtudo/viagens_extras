@@ -93,6 +93,7 @@ class User(SQLModel, table=True):
     company_id: Optional[int] = Field(default=None, foreign_key="company.id")
     base_id: Optional[int] = Field(default=None, foreign_key="base.id")
     password_hash: str = ""
+    min_advance_minutes: Optional[int] = Field(default=0)
     is_active: bool = True
 
     bases: List["Base"] = Relationship(back_populates="users", link_model=UserBaseLink)

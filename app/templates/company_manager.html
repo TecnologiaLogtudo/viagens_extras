@@ -106,6 +106,9 @@
           <button type="button" class="password-toggle" aria-label="Mostrar senha"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg></button>
         </div>
       </label>
+      <label>Antecedência Mínima (minutos)
+        <input type="number" min="0" name="min_advance_minutes" value="{{ edit_partner.min_advance_minutes if edit_partner else '0' }}" required />
+      </label>
       <fieldset class="full grouped-select">
         <legend>Bases sob controle</legend>
         <p class="muted" style="margin: 0 0 0.5rem 0;">Marque os vínculos de base que este parceiro poderá operar. A empresa será identificada automaticamente pelos vínculos selecionados; use vínculos da mesma empresa.</p>

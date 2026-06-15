@@ -79,9 +79,11 @@ def _mock_email_delivery(monkeypatch):
 def test_min_advance_validation(session):
     partner = session.exec(select(User).where(User.role == UserRole.PARTNER_REQUESTER)).first()
     base = session.exec(select(Base)).first()
-    payload = TravelRequestCreate(
+    
+    # 1. Past date validation
+    payload_past = TravelRequestCreate(
         base_id=base.id,
-        request_type="extra",
+        request_type="Viagem extra NILO",
         requested_datetime=datetime(2020, 1, 2, 10, 0, tzinfo=timezone.utc),
         origin="A",
         destination="B",
@@ -90,8 +92,30 @@ def test_min_advance_validation(session):
         cost_center="CC",
         reason="motivo",
     )
-    with pytest.raises(DomainError):
-        create_request(session, partner, payload)
+    with pytest.raises(DomainError) as exc_info:
+        create_request(session, partner, payload_past)
+    assert "no futuro" in str(exc_info.value)
+
+    # 2. Partner min_advance_minutes validation
+    from datetime import timedelta
+    partner.min_advance_minutes = 60
+    session.add(partner)
+    session.commit()
+    
+    payload_insufficient = TravelRequestCreate(
+        base_id=base.id,
+        request_type="Viagem extra NILO",
+        requested_datetime=datetime.now(timezone.utc) + timedelta(minutes=30),
+        origin="A",
+        destination="B",
+        quantity=1,
+        vehicle_type_requested="sedan",
+        cost_center="CC",
+        reason="motivo",
+    )
+    with pytest.raises(DomainError) as exc_info:
+        create_request(session, partner, payload_insufficient)
+    assert "Antecedência mínima" in str(exc_info.value)
 
 
 def test_full_happy_path_billable(session, monkeypatch):

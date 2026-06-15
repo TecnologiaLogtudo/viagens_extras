@@ -1252,6 +1252,8 @@ async def register_partner(
     phone = str(form.get("phone", "")).strip()
     partner_id_raw = form.get("partner_id")
     partner_id = int(partner_id_raw) if str(partner_id_raw).strip().isdigit() else None
+    min_advance_minutes_raw = form.get("min_advance_minutes")
+    min_advance_minutes = int(min_advance_minutes_raw) if str(min_advance_minutes_raw).strip().isdigit() else 0
     company_base_link_ids = _form_int_list(form, "company_base_link_ids")
     legacy_base_ids = _form_int_list(form, "base_ids")
 
@@ -1297,6 +1299,7 @@ async def register_partner(
             partner.password_hash = hash_password(password)
         partner.company_id = company.id
         partner.company_name = company.name
+        partner.min_advance_minutes = min_advance_minutes
         session.exec(delete(UserBaseLink).where(UserBaseLink.user_id == partner.id))
         for b_id in selected_base_ids:
             base = session.get(Base, b_id)
@@ -1333,6 +1336,7 @@ async def register_partner(
         company_name=company.name,
         phone=_format_phone_br(phone_digits) if phone_digits else None,
         password_hash=hash_password(password),
+        min_advance_minutes=min_advance_minutes,
         is_active=True
     )
     session.add(new_user)

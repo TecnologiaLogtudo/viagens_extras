@@ -295,9 +295,14 @@ def create_request(session: Session, user: User, payload: TravelRequestCreate) -
     if not allowed:
         raise DomainError("Empresa não autorizada para esta base.")
 
-    minutes_diff = (payload.requested_datetime - now_utc()).total_seconds() / 60
-    if minutes_diff < base.min_advance_minutes:
-        raise DomainError("Antecedência mínima não atendida para a base.")
+    if payload.requested_datetime <= now_utc():
+        raise DomainError("A data/hora do carregamento deve ser no futuro.")
+
+    min_advance = getattr(user, "min_advance_minutes", 0) or 0
+    if min_advance > 0:
+        minutes_diff = (payload.requested_datetime - now_utc()).total_seconds() / 60
+        if minutes_diff < min_advance:
+            raise DomainError(f"Antecedência mínima não atendida. Este parceiro exige antecedência mínima de {min_advance} minutos.")
 
     request = TravelRequest(
         protocol=generate_protocol(session),

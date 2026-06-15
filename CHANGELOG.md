@@ -5,6 +5,10 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased] - 2026-06-15
 
 ### Changed
+- **Antecedência Mínima Configurável por Parceiro:**
+  - Remoção completa de todas as restrições e travas de horário globais baseadas nas bases operacionais (`base.min_advance_minutes`). O parceiro agora pode solicitar viagens para qualquer momento do futuro, e o supervisor pode responder às solicitações a qualquer momento.
+  - Implementada a configuração de antecedência mínima especificamente no cadastro individual de cada Parceiro (campo `min_advance_minutes` no modelo `User`).
+  - Adicionado campo "Antecedência Mínima (minutos)" na interface do Gerente para as ações de cadastro e edição de Parceiros.
 - **Lista Suspensa para Tipo de Viagem:**
   - O campo de texto livre para Tipo de Viagem no formulário do Parceiro (no portal do parceiro) foi substituído por uma lista suspensa (select) com as opções: "Viagem extra NILO", "Carro dedicado", "Carro extra rota D2D" e "Cotação de preço".
 - **Ajustes de Rótulos e Mapeamentos no Portal do Parceiro:**
