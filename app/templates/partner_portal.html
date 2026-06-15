@@ -27,7 +27,7 @@
           <option value="Cotação de preço">Cotação de preço</option>
         </select>
       </label>
-      <label>Data/Hora
+      <label>Data/Hora do carregamento
         <input type="datetime-local" name="requested_datetime" required />
       </label>
       <label>Quantidade
@@ -42,10 +42,10 @@
       <div id="requested-vehicles-container" class="full" style="display: grid; grid-template-columns: 1fr; gap: 0.5rem;">
         <!-- Dynamically generated vehicle selects go here -->
       </div>
-      <label>Motivo
-        <input name="reason" />
+      <label>Centro de Custo
+        <input name="cost_center" />
       </label>
-      <label class="full">Notas
+      <label class="full">Observações do carregamento
         <textarea name="notes"></textarea>
       </label>
       <button class="full" type="submit">Registrar solicitação</button>

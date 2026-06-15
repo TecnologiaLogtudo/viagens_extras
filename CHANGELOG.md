@@ -6,7 +6,11 @@ All notable changes to this project will be documented in this file.
 
 ### Changed
 - **Lista Suspensa para Tipo de Viagem:**
-  - O campo de texto livre para Tipo de Viagem no formulário do Parceiro (tanto no portal do parceiro quanto no dashboard) foi substituído por uma lista suspensa (select) com as opções: "Viagem extra NILO", "Carro dedicado", "Carro extra rota D2D" e "Cotação de preço".
+  - O campo de texto livre para Tipo de Viagem no formulário do Parceiro (no portal do parceiro) foi substituído por uma lista suspensa (select) com as opções: "Viagem extra NILO", "Carro dedicado", "Carro extra rota D2D" e "Cotação de preço".
+- **Ajustes de Rótulos e Mapeamentos no Portal do Parceiro:**
+  - O rótulo "Data/Hora" foi alterado para "Data/Hora do carregamento".
+  - O rótulo e campo "Motivo" (que enviava `reason`) foram substituídos por "Centro de Custo" (enviando `cost_center`).
+  - O rótulo "Notas" foi alterado para "Observações do carregamento".
 - **Simplificação do Fluxo de Viagens Extras:**
   - Remoção completa da etapa de validação via código OTP pelo Parceiro.
   - Remoção completa da etapa de Despacho (dispatch) e Conclusão (complete) manual do Supervisor.
@@ -22,6 +26,7 @@ All notable changes to this project will be documented in this file.
 - Formulário e botões de envio/validação de código OTP no portal do Parceiro.
 - Formulários e botões de "Despachar" e "Finalizar" no portal do Supervisor e nas rotas da API.
 - Requisito de registro na tabela `Acceptance` (gerado na assinatura via OTP) para qualificar uma viagem no módulo financeiro.
+- Templates HTML obsoletos/legados não referenciados na aplicação (`dashboard.html` e `finance.html`).
 
 ## [1.1.0] - 2026-06-15
 
