@@ -4,10 +4,7 @@ from app.services.email_sender import EmailDeliveryError, load_smtp_settings_fro
 
 
 class FakeSMTP:
-    def __init__(self, host, port, timeout=10):
-        self.host = host
-        self.port = port
-        self.timeout = timeout
+    def __init__(self, *args, **kwargs):
         self.started_tls = False
         self.logged_in = False
         self.sent = False
@@ -53,11 +50,13 @@ def test_load_smtp_settings_from_env(monkeypatch):
 def test_send_email_success(monkeypatch):
     _set_env(monkeypatch)
     monkeypatch.setattr("app.services.email_sender.smtplib.SMTP", FakeSMTP)
+    monkeypatch.setattr("app.services.email_sender.smtplib.SMTP_SSL", FakeSMTP)
     send_email("to@example.com", "Subject", "Body")
 
 
 def test_send_email_failure(monkeypatch):
     _set_env(monkeypatch)
     monkeypatch.setattr("app.services.email_sender.smtplib.SMTP", BrokenSMTP)
+    monkeypatch.setattr("app.services.email_sender.smtplib.SMTP_SSL", BrokenSMTP)
     with pytest.raises(EmailDeliveryError):
         send_email("to@example.com", "Subject", "Body")

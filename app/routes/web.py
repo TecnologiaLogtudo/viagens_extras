@@ -2,13 +2,14 @@ import re
 import json
 import asyncio
 from datetime import timezone
+from pathlib import Path
 from urllib.parse import quote_plus
 from typing import List
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
-from fastapi.responses import HTMLResponse, RedirectResponse, Response, StreamingResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, Response, StreamingResponse, FileResponse
 from fastapi.templating import Jinja2Templates
-from sqlmodel import Session, select, and_, delete
+from sqlmodel import Session, select, and_, delete, func
 
 from app.auth import (
     SESSION_KEY,
@@ -21,6 +22,7 @@ from app.auth import (
     get_optional_user,
     partner_only,
     supervisor_or_manager,
+    login_required,
 )
 from app.db import engine, get_session
 from app.models import (
@@ -30,6 +32,7 @@ from app.models import (
     DecisionType,
     Driver,
     DriverActivityStatus,
+    Document,
     EventLog,
     OTPChallenge,
     OperationalConfirmation,
@@ -54,6 +57,7 @@ from app.services.workflow import (
     compute_sla,
     create_request,
     dispatch_trip,
+    generate_pdf_document,
     list_billable_requests,
     now_utc,
     propose_change,
@@ -162,7 +166,7 @@ def _base_context(session: Session, user: User) -> dict:
             sla_info[req.id] = compute_sla(req, base, session=session)
 
     counts = {
-        "open": len([r for r in scoped if r.status in (RequestStatus.SUBMITTED, RequestStatus.TRIAGE)]),
+        "open": len([r for r in scoped if r.status in (RequestStatus.SUBMITTED, RequestStatus.TRIAGE, RequestStatus.ACCEPTED)]),
         "pending_acceptance": len([r for r in scoped if r.status == RequestStatus.CONFIRMED]),
         "in_execution": len([r for r in scoped if r.status == RequestStatus.IN_EXECUTION]),
         "completed": len([r for r in scoped if r.status == RequestStatus.COMPLETED]),
@@ -215,6 +219,14 @@ def _base_context(session: Session, user: User) -> dict:
         if conf:
             confirmations[req.id] = conf
 
+    raw_types = session.exec(select(Vehicle.vehicle_type)).all()
+    vehicle_types = sorted(list({vt.upper() for vt in raw_types if vt}))
+    if not vehicle_types:
+        vehicle_types = ["SEDAN", "SUV", "VAN", "KOMBI", "MOTO"]
+
+    all_drivers = session.exec(select(Driver)).all()
+    drivers_map = {d.id: d for d in all_drivers}
+
     return {
         "travel_requests": scoped,
         "bases": {b.id: b for b in bases},
@@ -227,24 +239,59 @@ def _base_context(session: Session, user: User) -> dict:
         "status": RequestStatus,
         "driver_status": DriverActivityStatus,
         "can_manage_drivers": False,
-        "driver_rows": _driver_rows(session, supervisor_allowed_base_ids(session, user) if user.role == UserRole.BASE_SUPERVISOR else None)
+        "driver_rows": _driver_rows(session, supervisor_allowed_base_ids(session, user) if user.role == UserRole.BASE_SUPERVISOR else None)[0]
         if user.role in (UserRole.BASE_SUPERVISOR, UserRole.LOGISTICS_MANAGER)
         else [],
         "can_access_finance": can_access_finance(user),
         "can_access_operations": can_access_operations(user),
+        "vehicle_types": vehicle_types,
+        "drivers_map": drivers_map,
     }
 
 
-def _driver_rows(session: Session, base_ids: set[int] | list[int] | None = None) -> list[dict]:
+def _driver_rows(
+    session: Session,
+    base_ids: set[int] | list[int] | None = None,
+    filter_base_id: int | None = None,
+    filter_vehicle_type: str | None = None,
+    page: int | None = None,
+    per_page: int = 12,
+) -> tuple[list[dict], int]:
     query = select(Driver, Base, Vehicle).join(Base, Driver.base_id == Base.id).outerjoin(Vehicle, Driver.vehicle_id == Vehicle.id)
+    
+    # 1. Enforce supervisor allowed base restrictions or apply manager filters
     if base_ids is not None:
         base_id_list = sorted(set(base_ids))
         if not base_id_list:
-            return []
-        query = query.where(Driver.base_id.in_(base_id_list))
+            return [], 0
+        if filter_base_id is not None:
+            if filter_base_id in base_id_list:
+                query = query.where(Driver.base_id == filter_base_id)
+            else:
+                return [], 0
+        else:
+            query = query.where(Driver.base_id.in_(base_id_list))
+    else:
+        if filter_base_id is not None:
+            query = query.where(Driver.base_id == filter_base_id)
+
+    # 2. Apply vehicle category filter case-insensitively
+    if filter_vehicle_type:
+        query = query.where(func.lower(Vehicle.vehicle_type) == filter_vehicle_type.strip().lower())
+
+    all_results = session.exec(query.order_by(Driver.name, Base.name, Vehicle.plate)).all()
+    total_count = len(all_results)
+
+    # Slicing results in Python for robustness
+    if page is not None:
+        start = (page - 1) * per_page
+        end = start + per_page
+        results = all_results[start:end]
+    else:
+        results = all_results
 
     rows = []
-    for driver, base, vehicle in session.exec(query.order_by(Driver.name, Base.name, Vehicle.plate)).all():
+    for driver, base, vehicle in results:
         rows.append(
             {
                 "id": driver.id,
@@ -259,7 +306,7 @@ def _driver_rows(session: Session, base_ids: set[int] | list[int] | None = None)
                 "plate": vehicle.plate if vehicle else None,
             }
         )
-    return rows
+    return rows, total_count
 
 
 def _manager_context(session: Session) -> dict:
@@ -325,7 +372,7 @@ def _manager_context(session: Session) -> dict:
     return {
         "bases": bases,
         "companies": companies,
-        "driver_rows": _driver_rows(session),
+        "driver_rows": _driver_rows(session)[0],
         "can_manage_drivers": True,
         "company_base_links": company_base_links,
         "base_company_ids_by_base_id": base_company_ids_by_base_id,
@@ -704,27 +751,63 @@ def company_operations(
 @router.get("/empresa/motoristas", response_class=HTMLResponse)
 def company_drivers(
     request: Request,
+    filter_base_id: str | None = None,
+    filter_vehicle_type: str | None = None,
+    page: int = 1,
     session: Session = Depends(get_session),
 ):
     user = _require_roles_or_redirect(request, session, (UserRole.BASE_SUPERVISOR, UserRole.LOGISTICS_MANAGER))
     if isinstance(user, RedirectResponse):
         return user
-    can_manage_drivers = user.role == UserRole.LOGISTICS_MANAGER
+    can_manage_drivers = user.role in (UserRole.LOGISTICS_MANAGER, UserRole.BASE_SUPERVISOR)
     allowed_base_ids = supervisor_allowed_base_ids(session, user) if user.role == UserRole.BASE_SUPERVISOR else None
-    driver_rows = _driver_rows(session, allowed_base_ids)
-    if can_manage_drivers:
-        bases = session.exec(
+    
+    actual_base_id = int(filter_base_id) if filter_base_id and filter_base_id.strip().isdigit() else None
+    driver_rows, total_count = _driver_rows(
+        session,
+        allowed_base_ids,
+        filter_base_id=actual_base_id,
+        filter_vehicle_type=filter_vehicle_type,
+        page=page,
+    )
+    total_pages = (total_count + 11) // 12
+    
+    # Query bases available for filtering (restrict to supervisor's bases if base_supervisor)
+    if allowed_base_ids is not None:
+        filter_bases = session.exec(
+            select(Base).where(Base.id.in_(sorted(set(allowed_base_ids)))).order_by(Base.name, Base.location)
+        ).all()
+    else:
+        filter_bases = session.exec(
             select(Base).where(Base.active == True).order_by(Base.name, Base.location)
         ).all()
+
+    if can_manage_drivers:
+        if allowed_base_ids is not None:
+            bases = session.exec(
+                select(Base).where(and_(Base.active == True, Base.id.in_(sorted(set(allowed_base_ids))))).order_by(Base.name, Base.location)
+            ).all()
+        else:
+            bases = session.exec(
+                select(Base).where(Base.active == True).order_by(Base.name, Base.location)
+            ).all()
     else:
         bases = []
     edit_driver = None
+    error = request.query_params.get("error")
     if can_manage_drivers:
         edit_driver_id = request.query_params.get("edit_driver_id")
         if edit_driver_id and edit_driver_id.isdigit():
-            edit_driver = session.get(Driver, int(edit_driver_id))
+            driver_obj = session.get(Driver, int(edit_driver_id))
+            if driver_obj:
+                if user.role == UserRole.BASE_SUPERVISOR and allowed_base_ids is not None:
+                    if driver_obj.base_id in allowed_base_ids:
+                        edit_driver = driver_obj
+                    else:
+                        error = "Você não tem permissão para editar este motorista"
+                else:
+                    edit_driver = driver_obj
     message = request.query_params.get("message")
-    error = request.query_params.get("error")
     return templates.TemplateResponse(
         "company_drivers.html",
         {
@@ -732,6 +815,11 @@ def company_drivers(
             "user": user,
             "driver_rows": driver_rows,
             "bases": bases,
+            "filter_bases": filter_bases,
+            "filter_base_id": actual_base_id,
+            "filter_vehicle_type": filter_vehicle_type,
+            "page": page,
+            "total_pages": total_pages,
             "edit_driver": edit_driver,
             "can_manage_drivers": can_manage_drivers,
             "message": message,
@@ -748,10 +836,12 @@ def save_driver(
     name: str = Form(...),
     phone: str = Form(default=""),
     base_id: int = Form(...),
+    vehicle_type: str | None = Form(default=None),
+    plate: str | None = Form(default=None),
     active: str | None = Form(default=None),
     session: Session = Depends(get_session),
 ):
-    user = _require_roles_or_redirect(request, session, (UserRole.LOGISTICS_MANAGER,))
+    user = _require_roles_or_redirect(request, session, (UserRole.LOGISTICS_MANAGER, UserRole.BASE_SUPERVISOR))
     if isinstance(user, RedirectResponse):
         return user
 
@@ -768,23 +858,70 @@ def save_driver(
     if not base or not base.active:
         return _redirect(f"/empresa/motoristas?error={quote_plus('Base inválida')}")
 
+    if user.role == UserRole.BASE_SUPERVISOR:
+        allowed = supervisor_allowed_base_ids(session, user)
+        if base_id not in allowed:
+            return _redirect(f"/empresa/motoristas?error={quote_plus('Você não tem permissão para esta base')}")
+
+    # Handle vehicle linking/creation/updating
+    normalized_plate = plate.strip().upper() if plate else ""
+    normalized_vehicle_type = vehicle_type.strip().upper() if vehicle_type else ""
+
+    vehicle_id_to_link = None
+    if normalized_plate:
+        if not normalized_vehicle_type:
+            return _redirect(
+                f"/empresa/motoristas?error={quote_plus('Categoria do veículo é obrigatória quando a placa é fornecida')}"
+            )
+        
+        # Check if another vehicle has this plate
+        existing_vehicle = session.exec(
+            select(Vehicle).where(Vehicle.plate == normalized_plate)
+        ).first()
+        
+        if existing_vehicle:
+            # Update the existing vehicle details to match
+            existing_vehicle.vehicle_type = normalized_vehicle_type
+            existing_vehicle.base_id = base.id
+            session.add(existing_vehicle)
+            session.flush()
+            vehicle_id_to_link = existing_vehicle.id
+        else:
+            # Create a new vehicle
+            new_vehicle = Vehicle(
+                plate=normalized_plate,
+                vehicle_type=normalized_vehicle_type,
+                base_id=base.id,
+                active=True,
+            )
+            session.add(new_vehicle)
+            session.flush()
+            vehicle_id_to_link = new_vehicle.id
+
     target_driver = None
     if driver_id is not None:
         target_driver = session.get(Driver, driver_id)
         if not target_driver:
             return _redirect(f"/empresa/motoristas?error={quote_plus('Motorista inválido')}")
+        if user.role == UserRole.BASE_SUPERVISOR:
+            allowed = supervisor_allowed_base_ids(session, user)
+            if target_driver.base_id not in allowed:
+                return _redirect(f"/empresa/motoristas?error={quote_plus('Você não tem permissão para editar este motorista')}")
     else:
         target_driver = session.exec(
             select(Driver).where(and_(Driver.name == normalized_name, Driver.base_id == base.id))
         ).first()
 
     phone_value = _format_phone_br(phone_digits) if phone_digits else ""
-    is_active = active is not None
+    # When editing an existing driver, honor the active checkbox if present.
+    # When creating a new driver (no checkbox in the form) default to active=True.
     if target_driver:
+        is_active = active is not None
         target_driver.name = normalized_name
         target_driver.phone = phone_value
         target_driver.base_id = base.id
         target_driver.active = is_active
+        target_driver.vehicle_id = vehicle_id_to_link
         session.add(target_driver)
         session.add(
             EventLog(
@@ -800,7 +937,8 @@ def save_driver(
         name=normalized_name,
         phone=phone_value,
         base_id=base.id,
-        active=is_active,
+        active=True,
+        vehicle_id=vehicle_id_to_link,
     )
     session.add(new_driver)
     session.flush()
@@ -816,23 +954,39 @@ def save_driver(
 
 
 @router.post("/empresa/motoristas/bulk-delete")
-def bulk_delete_drivers(
+async def bulk_delete_drivers(
     request: Request,
-    driver_ids: List[int] = Form(default=[]),
+    driver_ids: list[str] | None = Form(None),
     session: Session = Depends(get_session),
 ):
-    user = _require_roles_or_redirect(request, session, (UserRole.LOGISTICS_MANAGER,))
+    user = _require_roles_or_redirect(request, session, (UserRole.LOGISTICS_MANAGER, UserRole.BASE_SUPERVISOR))
     if isinstance(user, RedirectResponse):
         return user
 
-    unique_driver_ids = sorted(set(driver_ids))
+    # Fallback to request.form() if the Form dependency didn't capture the list
+    if not driver_ids:
+        try:
+            form = await request.form()
+            driver_ids = form.getlist("driver_ids")
+        except Exception:
+            pass
+
+    driver_ids_raw = [str(i) for i in (driver_ids or [])]
+    unique_driver_ids = sorted({int(did) for did in driver_ids_raw if str(did).isdigit()})
+    
     if not unique_driver_ids:
         return _redirect(f"/empresa/motoristas?error={quote_plus('Selecione ao menos um motorista')}")
+
+    allowed = None
+    if user.role == UserRole.BASE_SUPERVISOR:
+        allowed = supervisor_allowed_base_ids(session, user)
 
     deleted_count = 0
     for driver_id in unique_driver_ids:
         driver = session.get(Driver, driver_id)
         if not driver:
+            continue
+        if allowed is not None and driver.base_id not in allowed:
             continue
         session.delete(driver)
         deleted_count += 1
@@ -848,6 +1002,71 @@ def bulk_delete_drivers(
     return _redirect(
         f"/empresa/motoristas?message={quote_plus(f'{deleted_count} motorista(s) excluído(s) com sucesso')}"
     )
+
+
+@router.post("/empresa/motoristas/{driver_id}/delete")
+def delete_driver(
+    request: Request,
+    driver_id: int,
+    session: Session = Depends(get_session),
+):
+    user = _require_roles_or_redirect(request, session, (UserRole.LOGISTICS_MANAGER, UserRole.BASE_SUPERVISOR))
+    if isinstance(user, RedirectResponse):
+        return user
+
+    driver = session.get(Driver, driver_id)
+    if not driver:
+        return _redirect(f"/empresa/motoristas?error={quote_plus('Motorista não encontrado')}")
+
+    if user.role == UserRole.BASE_SUPERVISOR:
+        allowed = supervisor_allowed_base_ids(session, user)
+        if driver.base_id not in allowed:
+            return _redirect(f"/empresa/motoristas?error={quote_plus('Você não tem permissão para excluir este motorista')}")
+
+    session.delete(driver)
+    session.add(
+        EventLog(
+            actor_user_id=user.id,
+            event_type="manager_data_changed",
+            payload=f"driver_deleted|driver_id={driver_id}",
+        )
+    )
+    session.commit()
+    return _redirect(f"/empresa/motoristas?message={quote_plus('Motorista excluído com sucesso')}")
+
+
+@router.post("/empresa/motoristas/{driver_id}/toggle-active")
+def toggle_driver_active(
+    request: Request,
+    driver_id: int,
+    session: Session = Depends(get_session),
+):
+    user = _require_roles_or_redirect(request, session, (UserRole.LOGISTICS_MANAGER, UserRole.BASE_SUPERVISOR))
+    if isinstance(user, RedirectResponse):
+        return user
+
+    driver = session.get(Driver, driver_id)
+    if not driver:
+        return _redirect(f"/empresa/motoristas?error={quote_plus('Motorista não encontrado')}")
+
+    if user.role == UserRole.BASE_SUPERVISOR:
+        allowed = supervisor_allowed_base_ids(session, user)
+        if driver.base_id not in allowed:
+            return _redirect(f"/empresa/motoristas?error={quote_plus('Você não tem permissão para alterar o status deste motorista')}")
+
+    driver.active = not driver.active
+    session.add(driver)
+    session.add(
+        EventLog(
+            actor_user_id=user.id,
+            event_type="manager_data_changed",
+            payload=f"driver_active_toggled|driver_id={driver.id}|active={driver.active}",
+        )
+    )
+    session.commit()
+    
+    state_str = "ativado" if driver.active else "desativado"
+    return _redirect(f"/empresa/motoristas?message={quote_plus(f'Motorista {state_str} com sucesso')}")
 
 
 @router.get("/empresa/gerencial", response_class=HTMLResponse)
@@ -1277,13 +1496,34 @@ def operations_drivers_fragment(
 @router.get("/empresa/motoristas/fragments/list", response_class=HTMLResponse)
 def drivers_list_fragment(
     request: Request,
+    filter_base_id: str | None = None,
+    filter_vehicle_type: str | None = None,
+    page: int = 1,
     session: Session = Depends(get_session),
     user: User = Depends(supervisor_or_manager),
 ):
-    driver_rows = _driver_rows(session, supervisor_allowed_base_ids(session, user) if user.role == UserRole.BASE_SUPERVISOR else None)
+    allowed_base_ids = supervisor_allowed_base_ids(session, user) if user.role == UserRole.BASE_SUPERVISOR else None
+    actual_base_id = int(filter_base_id) if filter_base_id and filter_base_id.strip().isdigit() else None
+    driver_rows, total_count = _driver_rows(
+        session,
+        allowed_base_ids,
+        filter_base_id=actual_base_id,
+        filter_vehicle_type=filter_vehicle_type,
+        page=page,
+    )
+    total_pages = (total_count + 11) // 12
     return templates.TemplateResponse(
         "_drivers_table.html",
-        {"request": request, "user": user, "table_id": "drivers-list", "driver_rows": driver_rows},
+        {
+            "request": request,
+            "user": user,
+            "table_id": "drivers-list",
+            "driver_rows": driver_rows,
+            "page": page,
+            "total_pages": total_pages,
+            "filter_base_id": actual_base_id,
+            "filter_vehicle_type": filter_vehicle_type,
+        },
     )
 
 
@@ -1312,8 +1552,25 @@ def operations_supervisor_panel_fragment(
         raise HTTPException(status_code=404, detail="Pedido não encontrado")
     if user.role == UserRole.BASE_SUPERVISOR and not supervisor_can_access_request(session, user, req):
         raise HTTPException(status_code=403, detail="Sem permissão para esta solicitação")
+    confirmation = session.exec(
+        select(OperationalConfirmation).where(OperationalConfirmation.request_id == req.id)
+    ).first()
     drivers = session.exec(select(Driver).where(Driver.base_id == req.base_id).order_by(Driver.name)).all()
     vehicles = session.exec(select(Vehicle).where(Vehicle.base_id == req.base_id).order_by(Vehicle.plate)).all()
+
+    # Filter drivers by requested or confirmed vehicle type
+    allowed_types = set()
+    if confirmation and confirmation.confirmed_vehicle_type:
+        allowed_types = {t.strip().lower() for t in confirmation.confirmed_vehicle_type.split(",") if t.strip()}
+    elif req.vehicle_type_requested:
+        allowed_types = {t.strip().lower() for t in req.vehicle_type_requested.split(",") if t.strip()}
+
+    if allowed_types:
+        drivers = [
+            d for d in drivers
+            if not d.vehicle or d.vehicle.vehicle_type.lower() in allowed_types
+        ]
+
     status_label = {
         RequestStatus.TRIAGE: "Triagem",
         RequestStatus.CONFIRMED: "Confirmado",
@@ -1333,6 +1590,7 @@ def operations_supervisor_panel_fragment(
             "drivers_for_selected": drivers,
             "vehicles_for_selected": vehicles,
             "driver_status": DriverActivityStatus,
+            "confirmation": confirmation,
         },
     )
 
@@ -1640,8 +1898,25 @@ def supervisor_panel(
     if user.role == UserRole.BASE_SUPERVISOR and not supervisor_can_access_request(session, user, req):
         raise HTTPException(status_code=403, detail="Sem permissão para esta solicitação")
 
+    confirmation = session.exec(
+        select(OperationalConfirmation).where(OperationalConfirmation.request_id == req.id)
+    ).first()
     drivers = session.exec(select(Driver).where(Driver.base_id == req.base_id).order_by(Driver.name)).all()
     vehicles = session.exec(select(Vehicle).where(Vehicle.base_id == req.base_id).order_by(Vehicle.plate)).all()
+
+    # Filter drivers by requested or confirmed vehicle type
+    allowed_types = set()
+    if confirmation and confirmation.confirmed_vehicle_type:
+        allowed_types = {t.strip().lower() for t in confirmation.confirmed_vehicle_type.split(",") if t.strip()}
+    elif req.vehicle_type_requested:
+        allowed_types = {t.strip().lower() for t in req.vehicle_type_requested.split(",") if t.strip()}
+
+    if allowed_types:
+        drivers = [
+            d for d in drivers
+            if not d.vehicle or d.vehicle.vehicle_type.lower() in allowed_types
+        ]
+
     status_label = {
         RequestStatus.TRIAGE: "Triagem",
         RequestStatus.CONFIRMED: "Confirmado",
@@ -1661,6 +1936,7 @@ def supervisor_panel(
             "drivers_for_selected": drivers,
             "vehicles_for_selected": vehicles,
             "driver_status": DriverActivityStatus,
+            "confirmation": confirmation,
         },
     )
 
@@ -1673,13 +1949,17 @@ def new_request(
     origin: str = Form(...),
     destination: str = Form(...),
     quantity: int = Form(...),
-    vehicle_type_requested: str = Form(...),
+    vehicle_type_requested: list[str] = Form(...),
     cost_center: str = Form(default=""),
     reason: str = Form(default=""),
     notes: str = Form(default=""),
     session: Session = Depends(get_session),
     user: User = Depends(partner_only),
 ):
+    if len(vehicle_type_requested) != quantity:
+        return _redirect(f"/partner?message={quote_plus('A quantidade de veículos e tipos de veículos deve ser igual.')}")
+
+    vehicle_type_requested_str = ", ".join([v.strip() for v in vehicle_type_requested if v.strip()])
     try:
         payload = TravelRequestCreate(
             base_id=base_id,
@@ -1688,14 +1968,14 @@ def new_request(
             origin=origin,
             destination=destination,
             quantity=quantity,
-            vehicle_type_requested=vehicle_type_requested,
+            vehicle_type_requested=vehicle_type_requested_str,
             cost_center=cost_center,
             reason=reason,
             notes=notes or None,
         )
         create_request(session, user, payload)
     except DomainError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return _redirect(f"/partner?message={quote_plus(str(exc))}")
 
     return _redirect("/partner")
 
@@ -1833,7 +2113,7 @@ def partner_propose_change(
     origin: str = Form(...),
     destination: str = Form(...),
     quantity: int = Form(...),
-    vehicle_type_requested: str = Form(...),
+    vehicle_type_requested: list[str] = Form(...),
     cost_center: str = Form(default=""),
     reason: str = Form(default=""),
     notes: str = Form(default=""),
@@ -1843,6 +2123,11 @@ def partner_propose_change(
     req = session.get(TravelRequest, request_id)
     if not req:
         raise HTTPException(404, "Pedido não encontrado")
+
+    if len(vehicle_type_requested) != quantity:
+        return _redirect(f"/partner?message={quote_plus('A quantidade de veículos e tipos de veículos deve ser igual.')}")
+
+    vehicle_type_requested_str = ", ".join([v.strip() for v in vehicle_type_requested if v.strip()])
     try:
         payload = TravelRequestCreate(
             base_id=req.base_id,
@@ -1851,7 +2136,7 @@ def partner_propose_change(
             origin=origin,
             destination=destination,
             quantity=quantity,
-            vehicle_type_requested=vehicle_type_requested,
+            vehicle_type_requested=vehicle_type_requested_str,
             cost_center=cost_center,
             reason=reason,
             notes=notes or None,
@@ -1887,10 +2172,11 @@ def triage(
     decision_type: DecisionType = Form(...),
     approved_quantity: int = Form(default=1),
     confirmed_datetime: str = Form(default="2030-01-01T10:00:00+00:00"),
-    confirmed_vehicle_type: str = Form(default="sedan"),
+    confirmed_vehicle_type: list[str] = Form(default=[]),
     tariff_value: float = Form(default=0.0),
     observations: str = Form(default=""),
     refusal_reason: str = Form(default=""),
+    driver_id: list[str] = Form(default=[]),
     session: Session = Depends(get_session),
     user: User = Depends(supervisor_or_manager),
 ):
@@ -1898,15 +2184,33 @@ def triage(
     if not req:
         raise HTTPException(404, "Pedido não encontrado")
 
+    confirmed_vehicle_types_str = ""
+    driver_ids_str = None
+    first_driver_id_val = None
+
+    if decision_type != DecisionType.REFUSE:
+        if len(confirmed_vehicle_type) != approved_quantity:
+            raise HTTPException(status_code=400, detail="A quantidade de tipos de veículos confirmados deve ser igual à quantidade aprovada.")
+        
+        valid_driver_ids = [d.strip() for d in driver_id if d.strip()]
+        if len(valid_driver_ids) != approved_quantity:
+            raise HTTPException(status_code=400, detail="Você deve vincular um motorista para cada veículo confirmado.")
+        
+        confirmed_vehicle_types_str = ", ".join([v.strip() for v in confirmed_vehicle_type if v.strip()])
+        driver_ids_str = ", ".join(valid_driver_ids)
+        first_driver_id_val = int(valid_driver_ids[0])
+
     try:
         payload = TriageDecisionPayload(
             decision_type=decision_type,
             approved_quantity=approved_quantity,
             confirmed_datetime=parse_form_datetime(confirmed_datetime),
-            confirmed_vehicle_type=confirmed_vehicle_type,
+            confirmed_vehicle_type=confirmed_vehicle_types_str,
             tariff_value=tariff_value,
             observations=observations or None,
             refusal_reason=refusal_reason or None,
+            driver_id=first_driver_id_val,
+            driver_ids=driver_ids_str,
         )
         triage_request(session, user, req, payload)
     except DomainError as exc:
@@ -2020,4 +2324,48 @@ def finance_csv(
         content=csv_data,
         media_type="text/csv",
         headers={"Content-Disposition": "attachment; filename=faturamento.csv"},
+    )
+
+
+@router.get("/requests/{request_id}/comprovante")
+def download_comprovante(
+    request_id: int,
+    session: Session = Depends(get_session),
+    user: User = Depends(login_required),
+):
+    """Retrieve the trip voucher (PDF) for a completed request.
+
+    If the PDF is missing from the database or the disk, it will be regenerated
+    on-the-fly. Checks permissions based on user role.
+    """
+    req = session.get(TravelRequest, request_id)
+    if not req:
+        raise HTTPException(status_code=404, detail="Pedido não encontrado")
+
+    # Access control checks based on role
+    if user.role == UserRole.PARTNER_REQUESTER:
+        if req.company_id != user.company_id:
+            raise HTTPException(status_code=403, detail="Sem permissão para este pedido")
+    elif user.role == UserRole.BASE_SUPERVISOR:
+        if not supervisor_can_access_request(session, user, req):
+            raise HTTPException(status_code=403, detail="Sem permissão para este pedido")
+    elif user.role in (UserRole.LOGISTICS_MANAGER, UserRole.FINANCE_READONLY):
+        pass
+    else:
+        raise HTTPException(status_code=403, detail="Sem permissão")
+
+    # Document retrieval and on-the-fly regeneration logic
+    doc = session.exec(select(Document).where(Document.request_id == req.id)).first()
+    file_exists = False
+    if doc and doc.file_path:
+        file_exists = Path(doc.file_path).exists()
+
+    if not doc or not file_exists:
+        # Regenerate document if missing
+        doc = generate_pdf_document(session, req)
+
+    return FileResponse(
+        path=doc.file_path,
+        media_type="application/pdf",
+        filename=f"comprovante_{req.protocol}.pdf",
     )

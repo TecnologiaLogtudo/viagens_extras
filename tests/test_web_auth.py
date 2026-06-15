@@ -5,7 +5,7 @@ from sqlmodel import Session, select
 
 from app.db import engine
 from app.main import app
-from app.models import Base, Company, CompanyBase, DecisionType, Driver, EventLog, OperationalConfirmation, RequestStatus, UserBaseLink, TravelRequest, User
+from app.models import Base, Company, CompanyBase, DecisionType, Driver, EventLog, OperationalConfirmation, RequestStatus, UserBaseLink, UserCompanyBaseLink, TravelRequest, User, Vehicle
 from app.routes.web import _event_matches_user, _resolve_company_from_base_ids
 from app.services.workflow import DomainError
 
@@ -142,6 +142,19 @@ def test_status_labels_by_profile_and_partner_cancel_action(client: TestClient):
         )
         session.add(req)
         session.flush()
+
+        # Link supervisor to request's base in the test
+        cb = session.exec(select(CompanyBase).where(CompanyBase.base_id == base.id)).first()
+        if cb:
+            # Ensure the link doesn't already exist to prevent integrity errors
+            exists = session.exec(
+                select(UserCompanyBaseLink).where(
+                    UserCompanyBaseLink.user_id == sup.id,
+                    UserCompanyBaseLink.company_base_id == cb.id,
+                )
+            ).first()
+            if not exists:
+                session.add(UserCompanyBaseLink(user_id=sup.id, company_base_id=cb.id))
         session.add(
             OperationalConfirmation(
                 request_id=req.id,
@@ -468,7 +481,7 @@ def test_manager_can_add_edit_and_bulk_delete_drivers(client: TestClient):
 
     delete_bulk = client.post(
         "/empresa/motoristas/bulk-delete",
-        data=[("driver_ids", driver_one_id), ("driver_ids", driver_two_id)],
+        data={"driver_ids": [str(driver_one_id), str(driver_two_id)]},
         follow_redirects=False,
     )
     assert delete_bulk.status_code == 303
@@ -501,3 +514,450 @@ def test_resolve_company_from_selected_bases_prefers_existing_company():
         resolved = _resolve_company_from_base_ids(session, [base_a.id])
         assert resolved is not None
         assert resolved.id == company_a.id
+
+
+def test_manager_can_toggle_driver_active(client: TestClient):
+    login(client, "gerente@logtudo.local", "gerente123")
+
+    with Session(engine) as session:
+        base = session.exec(select(Base).order_by(Base.id)).first()
+        assert base is not None
+        base_id = base.id
+
+    stamp = int(datetime.now(timezone.utc).timestamp())
+    driver_name = f"Driver Active Toggle {stamp}"
+
+    # Create driver
+    client.post(
+        "/empresa/motoristas/save",
+        data={"name": driver_name, "phone": "71999887766", "base_id": base_id, "active": "1"},
+        follow_redirects=False,
+    )
+
+    with Session(engine) as session:
+        driver = session.exec(select(Driver).where(Driver.name == driver_name)).first()
+        assert driver is not None
+        assert driver.active is True
+        driver_id = driver.id
+
+    # Toggle to False
+    resp1 = client.post(f"/empresa/motoristas/{driver_id}/toggle-active", follow_redirects=False)
+    assert resp1.status_code == 303
+
+    with Session(engine) as session:
+        driver = session.get(Driver, driver_id)
+        assert driver.active is False
+
+    # Toggle back to True
+    resp2 = client.post(f"/empresa/motoristas/{driver_id}/toggle-active", follow_redirects=False)
+    assert resp2.status_code == 303
+
+    with Session(engine) as session:
+        driver = session.get(Driver, driver_id)
+        assert driver.active is True
+
+
+def test_manager_can_delete_single_driver(client: TestClient):
+    login(client, "gerente@logtudo.local", "gerente123")
+
+    with Session(engine) as session:
+        base = session.exec(select(Base).order_by(Base.id)).first()
+        assert base is not None
+        base_id = base.id
+
+    stamp = int(datetime.now(timezone.utc).timestamp())
+    driver_name = f"Driver Single Delete {stamp}"
+
+    # Create driver
+    client.post(
+        "/empresa/motoristas/save",
+        data={"name": driver_name, "phone": "71999887766", "base_id": base_id, "active": "1"},
+        follow_redirects=False,
+    )
+
+    with Session(engine) as session:
+        driver = session.exec(select(Driver).where(Driver.name == driver_name)).first()
+        assert driver is not None
+        driver_id = driver.id
+
+    # Delete driver
+    resp = client.post(f"/empresa/motoristas/{driver_id}/delete", follow_redirects=False)
+    assert resp.status_code == 303
+
+    with Session(engine) as session:
+        assert session.get(Driver, driver_id) is None
+
+
+def test_manager_can_create_driver_with_vehicle(client: TestClient):
+    login(client, "gerente@logtudo.local", "gerente123")
+
+    with Session(engine) as session:
+        base = session.exec(select(Base).order_by(Base.id)).first()
+        assert base is not None
+        base_id = base.id
+
+    stamp = int(datetime.now(timezone.utc).timestamp())
+    driver_name = f"Driver Vehicle {stamp}"
+    plate = f"PLK{stamp % 10000:04d}"
+
+    # Create driver with vehicle
+    create_resp = client.post(
+        "/empresa/motoristas/save",
+        data={
+            "name": driver_name,
+            "phone": "71999887766",
+            "base_id": base_id,
+            "vehicle_type": "sedan",
+            "plate": plate,
+            "active": "1",
+        },
+        follow_redirects=False,
+    )
+    assert create_resp.status_code == 303
+
+    with Session(engine) as session:
+        driver = session.exec(select(Driver).where(Driver.name == driver_name)).first()
+        assert driver is not None
+        assert driver.vehicle_id is not None
+        vehicle = session.get(Vehicle, driver.vehicle_id)
+        assert vehicle is not None
+        assert vehicle.plate == plate
+        assert vehicle.vehicle_type == "SEDAN"
+        driver_id = driver.id
+
+    # Edit and update vehicle type
+    edit_resp = client.post(
+        "/empresa/motoristas/save",
+        data={
+            "driver_id": driver_id,
+            "name": driver_name,
+            "phone": "71999887766",
+            "base_id": base_id,
+            "vehicle_type": "van",
+            "plate": plate,
+            "active": "1",
+        },
+        follow_redirects=False,
+    )
+    assert edit_resp.status_code == 303
+
+    with Session(engine) as session:
+        driver = session.get(Driver, driver_id)
+        vehicle = session.get(Vehicle, driver.vehicle_id)
+        assert vehicle.vehicle_type == "VAN"
+
+
+def test_manager_can_filter_drivers_by_base_and_vehicle_type(client: TestClient):
+    login(client, "gerente@logtudo.local", "gerente123")
+
+    with Session(engine) as session:
+        base = session.exec(select(Base).order_by(Base.id)).first()
+        assert base is not None
+        base_id = base.id
+
+    stamp = int(datetime.now(timezone.utc).timestamp())
+    driver_name = f"FilterDriver {stamp}"
+    plate = f"FLT{stamp % 10000:04d}"
+
+    # Create a specific driver with a unique category KOMBI
+    client.post(
+        "/empresa/motoristas/save",
+        data={
+            "name": driver_name,
+            "phone": "71999887766",
+            "base_id": base_id,
+            "vehicle_type": "KOMBI",
+            "plate": plate,
+            "active": "1",
+        },
+        follow_redirects=False,
+    )
+
+    # 1. Query the fragment filter by base and vehicle type KOMBI
+    resp_frag = client.get(
+        f"/empresa/motoristas/fragments/list?filter_base_id={base_id}&filter_vehicle_type=KOMBI"
+    )
+    assert resp_frag.status_code == 200
+    assert driver_name in resp_frag.text
+
+    # 2. Query the fragment with a different filter (e.g. vehicle type MOTO)
+    resp_frag_empty = client.get(
+        f"/empresa/motoristas/fragments/list?filter_base_id={base_id}&filter_vehicle_type=MOTO"
+    )
+    assert resp_frag_empty.status_code == 200
+    assert driver_name not in resp_frag_empty.text
+
+    # 3. Query the main page with KOMBI filter
+    resp_page = client.get(
+        f"/empresa/motoristas?filter_base_id={base_id}&filter_vehicle_type=KOMBI"
+    )
+    assert resp_page.status_code == 200
+    assert driver_name in resp_page.text
+
+
+def test_manager_drivers_table_pagination(client: TestClient):
+    login(client, "gerente@logtudo.local", "gerente123")
+
+    with Session(engine) as session:
+        base = session.exec(select(Base).order_by(Base.id)).first()
+        assert base is not None
+        base_id = base.id
+        
+        # Create 15 drivers to test pagination (needs at least 13 to have 2 pages)
+        for i in range(15):
+            driver_name = f"PaginatedDriver {i}"
+            driver = Driver(name=driver_name, phone="", base_id=base_id, active=True)
+            session.add(driver)
+        session.commit()
+
+    # Query page 1
+    resp_page_1 = client.get("/empresa/motoristas?page=1")
+    assert resp_page_1.status_code == 200
+    assert "1 / 2" in resp_page_1.text  # pagination indicator: page 1 of 2
+    assert "Próxima" in resp_page_1.text
+
+    # Query page 2
+    resp_page_2 = client.get("/empresa/motoristas?page=2")
+    assert resp_page_2.status_code == 200
+    assert "2 / 2" in resp_page_2.text
+    assert "Anterior" in resp_page_2.text
+
+
+def test_download_comprovante_route(client: TestClient):
+    import os
+    from pathlib import Path
+    from app.models import UserRole
+    from app.auth import hash_password
+    from app.models import Notification, NotificationType
+
+    # 1. Setup a completed travel request
+    with Session(engine) as session:
+        partner = session.exec(select(User).where(User.email == "parceiro@logtudo.local")).first()
+        base = session.exec(select(Base)).first()
+        company = session.get(Company, partner.company_id)
+        
+        req = TravelRequest(
+            protocol=f"VX-COMP-{int(datetime.now(timezone.utc).timestamp())}",
+            company_id=company.id,
+            base_id=base.id,
+            requested_by_user_id=partner.id,
+            request_type="extra",
+            requested_datetime=datetime.now(timezone.utc),
+            origin="A",
+            destination="B",
+            quantity=1,
+            vehicle_type_requested="sedan",
+            cost_center="CC",
+            reason="teste comprovante",
+            status=RequestStatus.COMPLETED,
+        )
+        session.add(req)
+        session.flush()
+
+        notification = Notification(
+            request_id=req.id,
+            type=NotificationType.OTP_SENT,
+            recipient=partner.email,
+            subject="OTP",
+            body="Seu codigo OTP e: 633081. Valido por 10 minutos."
+        )
+        session.add(notification)
+        session.commit()
+        session.refresh(req)
+        req_id = req.id
+        protocol = req.protocol
+        base_id = base.id
+
+    # File path where PDF is generated
+    base_dir = Path(__file__).resolve().parent.parent
+    pdf_path = base_dir / "app" / "data" / "documents" / f"{protocol}.pdf"
+
+    try:
+        # 2. Try accessing while not logged in
+        resp = client.get(f"/requests/{req_id}/comprovante", follow_redirects=False)
+        assert resp.status_code == 303 or resp.status_code == 401
+        
+        # 3. Log in as partner and download (success)
+        login(client, "parceiro@logtudo.local", "parceiro123")
+        resp = client.get(f"/requests/{req_id}/comprovante")
+        assert resp.status_code == 200
+        assert resp.headers["content-type"] == "application/pdf"
+        assert f'attachment; filename="comprovante_{protocol}.pdf"' in resp.headers["content-disposition"]
+        assert pdf_path.exists()
+        
+        # 4. Try as partner of another company
+        with Session(engine) as session:
+            other_company = Company(name="Outra Cia", cnpj="99.999.999/0001-99")
+            session.add(other_company)
+            session.flush()
+            other_partner = User(
+                full_name="Outro Parceiro",
+                email="outro_parceiro@test.local",
+                role=UserRole.PARTNER_REQUESTER,
+                company_id=other_company.id,
+                company_name=other_company.name,
+                password_hash=hash_password("senha123"),
+                is_active=True,
+            )
+            session.add(other_partner)
+            session.commit()
+            
+        login(client, "outro_parceiro@test.local", "senha123")
+        resp = client.get(f"/requests/{req_id}/comprovante")
+        assert resp.status_code == 403
+
+        # 5. Log in as supervisor and download (success, if supervisor has base permission)
+        with Session(engine) as session:
+            sup = session.exec(select(User).where(User.email == "supervisor@logtudo.local")).first()
+            # Link supervisor to request's base if not linked
+            cb = session.exec(select(CompanyBase).where(CompanyBase.base_id == base_id)).first()
+            if cb:
+                exists = session.exec(
+                    select(UserCompanyBaseLink).where(
+                        UserCompanyBaseLink.user_id == sup.id,
+                        UserCompanyBaseLink.company_base_id == cb.id,
+                    )
+                ).first()
+                if not exists:
+                    session.add(UserCompanyBaseLink(user_id=sup.id, company_base_id=cb.id))
+            session.commit()
+            
+        login(client, "supervisor@logtudo.local", "supervisor123")
+        resp = client.get(f"/requests/{req_id}/comprovante")
+        assert resp.status_code == 200
+
+        # 6. Try as supervisor without base permission
+        with Session(engine) as session:
+            other_base = Base(name="PE_TEST", location="Recife Test", sla_minutes=30, min_advance_minutes=60)
+            session.add(other_base)
+            session.flush()
+            other_sup = User(
+                full_name="Outro Sup",
+                email="outro_sup@test.local",
+                role=UserRole.BASE_SUPERVISOR,
+                base_id=other_base.id,
+                company_name="Logtudo",
+                password_hash=hash_password("senha123"),
+                is_active=True,
+            )
+            session.add(other_sup)
+            session.commit()
+            
+        login(client, "outro_sup@test.local", "senha123")
+        resp = client.get(f"/requests/{req_id}/comprovante")
+        assert resp.status_code == 403
+
+        # 7. Log in as manager and download (success)
+        login(client, "gerente@logtudo.local", "gerente123")
+        resp = client.get(f"/requests/{req_id}/comprovante")
+        assert resp.status_code == 200
+
+        # 8. Test on-the-fly regeneration when physical file is deleted
+        if pdf_path.exists():
+            os.remove(pdf_path)
+        assert not pdf_path.exists()
+        
+        # Request again (will trigger regeneration)
+        resp = client.get(f"/requests/{req_id}/comprovante")
+        assert resp.status_code == 200
+        assert pdf_path.exists()
+        
+    finally:
+        # Cleanup physical file
+        if pdf_path.exists():
+            try:
+                os.remove(pdf_path)
+            except Exception:
+                pass
+
+
+def test_supervisor_panel_driver_filtering(client: TestClient):
+    login(client, "supervisor@logtudo.local", "supervisor123")
+
+    with Session(engine) as session:
+        partner = session.exec(select(User).where(User.email == "parceiro@logtudo.local")).first()
+        sup = session.exec(select(User).where(User.email == "supervisor@logtudo.local")).first()
+        sup_id = sup.id
+        base = session.exec(select(Base)).first()
+        company = session.get(Company, partner.company_id)
+
+        # Create request for SEDAN
+        req = TravelRequest(
+            protocol=f"VX-FILT-{int(datetime.now(timezone.utc).timestamp())}",
+            company_id=company.id,
+            base_id=base.id,
+            requested_by_user_id=partner.id,
+            request_type="extra",
+            requested_datetime=datetime(2030, 1, 3, 10, 0, tzinfo=timezone.utc),
+            origin="A",
+            destination="B",
+            quantity=1,
+            vehicle_type_requested="sedan",
+            cost_center="CC",
+            reason="teste",
+            status=RequestStatus.TRIAGE,
+        )
+        session.add(req)
+        session.flush()
+
+        # Link supervisor to request's base in the test
+        cb = session.exec(select(CompanyBase).where(CompanyBase.base_id == base.id)).first()
+        if cb:
+            exists = session.exec(
+                select(UserCompanyBaseLink).where(
+                    UserCompanyBaseLink.user_id == sup_id,
+                    UserCompanyBaseLink.company_base_id == cb.id,
+                )
+            ).first()
+            if not exists:
+                session.add(UserCompanyBaseLink(user_id=sup_id, company_base_id=cb.id))
+
+        # Create three drivers with unique plates to avoid conflicts
+        stamp = int(datetime.now(timezone.utc).timestamp())
+        v_sedan = Vehicle(plate=f"SED{stamp%10000:04d}", vehicle_type="SEDAN", base_id=base.id, active=True)
+        session.add(v_sedan)
+        session.flush()
+        d_sedan = Driver(name="Driver Sedan Test", phone="11911111111", base_id=base.id, vehicle_id=v_sedan.id, active=True)
+        session.add(d_sedan)
+
+        v_van = Vehicle(plate=f"VAN{stamp%10000:04d}", vehicle_type="VAN", base_id=base.id, active=True)
+        session.add(v_van)
+        session.flush()
+        d_van = Driver(name="Driver Van Test", phone="11922222222", base_id=base.id, vehicle_id=v_van.id, active=True)
+        session.add(d_van)
+
+        d_none = Driver(name="Driver No Vehicle Test", phone="11933333333", base_id=base.id, vehicle_id=None, active=True)
+        session.add(d_none)
+
+        session.commit()
+        session.refresh(req)
+        req_id = req.id
+
+    # 1. Access supervisor panel with requested vehicle_type = sedan (no confirmation yet)
+    resp = client.get(f"/empresa/requests/{req_id}/supervisor-panel")
+    assert resp.status_code == 200
+    assert "Driver Sedan Test" in resp.text
+    assert "Driver No Vehicle Test" in resp.text
+    assert "Driver Van Test" not in resp.text
+
+    # 2. Now add confirmation choosing VAN
+    with Session(engine) as session:
+        session.add(
+            OperationalConfirmation(
+                request_id=req_id,
+                supervisor_user_id=sup_id,
+                decision_type=DecisionType.CONFIRM,
+                approved_quantity=1,
+                confirmed_datetime=datetime(2030, 1, 3, 10, 0, tzinfo=timezone.utc),
+                confirmed_vehicle_type="van",
+                tariff_value=120.0,
+            )
+        )
+        session.commit()
+
+    # 3. Access supervisor panel again (should filter by confirmed vehicle_type = van)
+    resp = client.get(f"/empresa/requests/{req_id}/supervisor-panel")
+    assert resp.status_code == 200
+    assert "Driver Van Test" in resp.text
+    assert "Driver No Vehicle Test" in resp.text
+    assert "Driver Sedan Test" not in resp.text

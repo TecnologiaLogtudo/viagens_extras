@@ -6,7 +6,7 @@ from sqlmodel import Session
 
 from app.db import engine, init_db
 from app.routes.web import router as web_router
-from app.services.bootstrap import seed_runtime_data
+
 
 load_dotenv()
 
@@ -24,8 +24,6 @@ app.include_router(web_router)
 @app.on_event("startup")
 def on_startup():
     init_db()
-    with Session(engine) as session:
-        seed_runtime_data(session)
 
 
 @app.get("/health")

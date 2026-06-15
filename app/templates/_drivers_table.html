@@ -1,47 +1,124 @@
+{% set can_manage_drivers = user and user.role.value in ['logistics_manager', 'base_supervisor'] %}
 <div id="{{ table_id }}" class="table-wrap">
   {% if can_manage_drivers %}
-  <form method="post" action="/empresa/motoristas/bulk-delete" onsubmit="return confirm('Excluir os motoristas selecionados?');">
+  <form id="bulk-delete-form" method="post" action="/empresa/motoristas/bulk-delete" onsubmit="return confirm('Excluir os motoristas selecionados?');"></form>
   {% endif %}
-  <table>
+  <table class="drivers-table">
     <thead>
       <tr>
-        {% if can_manage_drivers %}<th></th>{% endif %}
-        <th>Nome</th>
-        <th>Telefone</th>
-        <th>Categoria do veículo</th>
-        <th>Base</th>
-        <th>Placa</th>
-        {% if can_manage_drivers %}<th>Ações</th>{% endif %}
+        {% if can_manage_drivers %}<th class="col-checkbox"></th>{% endif %}
+        <th class="col-name">Nome</th>
+        <th class="col-phone">Telefone</th>
+        <th class="col-category">Categoria do veículo</th>
+        <th class="col-base">Base</th>
+        <th class="col-plate">Placa</th>
+        <th class="col-status">Status</th>
+        {% if can_manage_drivers %}<th class="col-actions">Ações</th>{% endif %}
       </tr>
     </thead>
     <tbody>
       {% for row in driver_rows %}
       <tr>
         {% if can_manage_drivers %}
-        <td><input type="checkbox" name="driver_ids" value="{{ row.id }}" /></td>
+        <td class="col-checkbox"><input type="checkbox" name="driver_ids" value="{{ row.id }}" form="bulk-delete-form" /></td>
         {% endif %}
-        <td>{{ row.name }}</td>
-        <td>{{ row.phone or '—' }}</td>
-        <td>{{ row.vehicle_type or '—' }}</td>
-        <td>{{ row.base_name }}{% if row.base_location %} — {{ row.base_location }}{% endif %}</td>
-        <td>{{ row.plate or '—' }}</td>
+        <td class="col-name" style="font-weight: 700; color: var(--ink);">{{ row.name }}</td>
+        <td class="col-phone">
+          {% if row.phone %}
+            <div style="display: flex; flex-direction: column; gap: 0.2rem;">
+              <span style="font-weight: 600; font-size: 0.85rem;">{{ row.phone }}</span>
+              <div style="display: flex; gap: 0.4rem; align-items: center; margin-top: 0.1rem;">
+                {% set clean_phone = row.phone | replace(' ', '') | replace('-', '') | replace('+', '') | replace('(', '') | replace(')', '') %}
+                {% set wa_num = clean_phone if clean_phone.startswith('55') else '55' ~ clean_phone %}
+                <a href="https://wa.me/{{ wa_num }}" target="_blank" style="color: #25D366; display: inline-flex; align-items: center; text-decoration: none;" title="Conversar no WhatsApp">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12.012 2c-5.506 0-9.989 4.478-9.99 9.984a9.96 9.96 0 0 0 1.333 4.993L2 22l5.233-1.371A9.927 9.927 0 0 0 12.008 22c5.506 0 9.989-4.478 9.99-9.986 0-2.67-1.037-5.18-2.92-7.062A9.923 9.923 0 0 0 12.012 2zm5.845 14.242c-.254.717-1.48 1.403-2.036 1.48-.553.078-1.26.11-2.052-.144a10.29 10.29 0 0 1-5.182-3.149 11.233 11.233 0 0 1-2.42-3.568c-.443-.759-.728-1.579-.762-2.434-.035-.867.291-1.611.83-2.14.267-.26.586-.312.83-.312h.59c.19 0 .428.016.634.468.223.49.762 1.84.828 1.974.066.134.11.29.02.468-.09.177-.134.29-.267.447-.134.156-.282.35-.402.47-.134.133-.274.279-.118.547a8.472 8.472 0 0 0 1.547 1.916 7.643 7.643 0 0 0 2.234 1.383c.272.134.433.112.593-.067.156-.178.68-.79.862-1.06.182-.27.362-.223.614-.134.254.09 1.61.758 1.888.897.279.14.463.206.53.32.066.117.066.68-.188 1.397z"/></svg>
+                </a>
+                <a href="tel:+{{ wa_num }}" style="color: #007bff; display: inline-flex; align-items: center; text-decoration: none;" title="Ligar para o motorista">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"></path></svg>
+                </a>
+              </div>
+            </div>
+          {% else %}
+            <span class="muted">—</span>
+          {% endif %}
+        </td>
+        <td class="col-category">{{ row.vehicle_type or '—' }}</td>
+        <td class="col-base">{{ row.base_name }}{% if row.base_location %} — {{ row.base_location }}{% endif %}</td>
+        <td class="col-plate">{{ row.plate or '—' }}</td>
+        <td class="col-status">
+          {% if can_manage_drivers %}
+            <form method="post" action="/empresa/motoristas/{{ row.id }}/toggle-active" style="display:inline; margin:0;">
+              {% if row.active %}
+                <button type="submit" class="pill green" style="border:none; cursor:pointer;" data-confirm="Desativar este motorista?">Ativo</button>
+              {% else %}
+                <button type="submit" class="pill red" style="border:none; cursor:pointer;" data-confirm="Ativar este motorista?">Inativo</button>
+              {% endif %}
+            </form>
+          {% else %}
+            {% if row.active %}
+              <span class="pill green">Ativo</span>
+            {% else %}
+              <span class="pill red">Inativo</span>
+            {% endif %}
+          {% endif %}
+        </td>
         {% if can_manage_drivers %}
-        <td>
-          <a class="pill" href="/empresa/motoristas?edit_driver_id={{ row.id }}">Editar</a>
+        <td class="col-actions">
+          <div style="display: inline-flex; gap: 0.5rem; align-items: center;">
+            <a class="pill" href="/empresa/motoristas?edit_driver_id={{ row.id }}">Editar</a>
+            <form method="post" action="/empresa/motoristas/{{ row.id }}/delete" style="display:inline; margin:0;">
+              <button type="submit" class="pill red" style="border:none; cursor:pointer; font-size:0.68rem; font-weight:800;" data-confirm="Excluir este motorista?">Excluir</button>
+            </form>
+          </div>
         </td>
         {% endif %}
       </tr>
       {% else %}
       <tr>
-        <td colspan="{{ 7 if can_manage_drivers else 5 }}" class="muted">{{ empty_message|default('Nenhum motorista cadastrado.') }}</td>
+        <td colspan="{{ 8 if can_manage_drivers else 6 }}" class="muted">{{ empty_message|default('Nenhum motorista cadastrado.') }}</td>
       </tr>
       {% endfor %}
     </tbody>
   </table>
-  {% if can_manage_drivers %}
-  <div class="driver-actions" style="margin-top: 0.75rem;">
-    <button type="submit" class="pill red">Excluir selecionados</button>
+  
+  <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; margin-top: 0.75rem; gap: 0.75rem;">
+    {% if can_manage_drivers %}
+    <div class="driver-actions">
+      <button type="submit" class="pill red" form="bulk-delete-form">Excluir selecionados</button>
+    </div>
+    {% endif %}
+    
+    <!-- Pagination controls inside table wrap -->
+    {% if total_pages and total_pages > 1 %}
+    <div class="pagination-row" style="display: inline-flex; align-items: center; gap: 0.75rem; margin-left: auto;">
+      {% if page > 1 %}
+      <button type="button" 
+              hx-get="/empresa/motoristas/fragments/list?page={{ page - 1 }}&filter_base_id={{ filter_base_id or '' }}&filter_vehicle_type={{ filter_vehicle_type or '' }}" 
+              hx-target="#drivers-list" 
+              hx-swap="outerHTML" 
+              class="pill" 
+              style="border: 1px solid var(--line); background: #fff; cursor: pointer; color: var(--ink); font-weight:700;">
+        &laquo; Anterior
+      </button>
+      {% else %}
+      <span class="pill muted" style="border: 1px solid transparent; opacity: 0.5; font-weight:700;">&laquo; Anterior</span>
+      {% endif %}
+
+      <span style="font-size: 0.75rem; font-weight: 700; color: var(--muted);">{{ page }} / {{ total_pages }}</span>
+
+      {% if page < total_pages %}
+      <button type="button" 
+              hx-get="/empresa/motoristas/fragments/list?page={{ page + 1 }}&filter_base_id={{ filter_base_id or '' }}&filter_vehicle_type={{ filter_vehicle_type or '' }}" 
+              hx-target="#drivers-list" 
+              hx-swap="outerHTML" 
+              class="pill" 
+              style="border: 1px solid var(--line); background: #fff; cursor: pointer; color: var(--ink); font-weight:700;">
+        Próxima &raquo;
+      </button>
+      {% else %}
+      <span class="pill muted" style="border: 1px solid transparent; opacity: 0.5; font-weight:700;">Próxima &raquo;</span>
+      {% endif %}
+    </div>
+    {% endif %}
   </div>
-  </form>
-  {% endif %}
 </div>

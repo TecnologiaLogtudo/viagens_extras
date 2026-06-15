@@ -148,6 +148,8 @@ class OperationalConfirmation(SQLModel, table=True):
     confirmed_vehicle_type: str
     tariff_value: float
     observations: Optional[str] = None
+    driver_id: Optional[int] = Field(default=None, foreign_key="driver.id")
+    driver_ids: Optional[str] = None
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
@@ -235,6 +237,8 @@ class TriageDecisionPayload(SQLModel):
     tariff_value: float
     observations: Optional[str] = None
     refusal_reason: Optional[str] = None
+    driver_id: Optional[int] = None
+    driver_ids: Optional[str] = None
 
 
 class ConfirmationPayload(SQLModel):

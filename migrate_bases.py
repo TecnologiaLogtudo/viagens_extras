@@ -3,26 +3,16 @@ from __future__ import annotations
 from pathlib import Path
 
 import pandas as pd
-from sqlmodel import Session, delete, select
+from sqlmodel import Session, select
 
 from app.db import engine
 from app.models import (
-    Acceptance,
     Base,
     Company,
     CompanyBase,
-    Dispatch,
-    Document,
-    Driver,
-    EventLog,
-    Notification,
-    OTPChallenge,
-    OperationalConfirmation,
-    TravelRequest,
     User,
     UserBaseLink,
     UserRole,
-    Vehicle,
 )
 
 
@@ -49,46 +39,31 @@ def migrate() -> None:
     )
 
     with Session(engine) as session:
-        # Clear dependent operational data first so the base/company reset is clean.
-        for model in (
-            OperationalConfirmation,
-            Acceptance,
-            Dispatch,
-            OTPChallenge,
-            Document,
-            Notification,
-            EventLog,
-            TravelRequest,
-            Driver,
-            Vehicle,
-            UserBaseLink,
-            CompanyBase,
-            Company,
-            Base,
-        ):
-            session.exec(delete(model))
-
-        session.flush()
-
         companies: dict[str, Company] = {}
         for index, company_name in enumerate(company_order, start=1):
-            company = Company(name=company_name, cnpj=_placeholder_cnpj(index))
-            session.add(company)
-            session.flush()
+            company = session.exec(select(Company).where(Company.name == company_name)).first()
+            if not company:
+                company = Company(name=company_name, cnpj=_placeholder_cnpj(index))
+                session.add(company)
+                session.flush()
             companies[company_name] = company
 
         bases: dict[tuple[str, str], Base] = {}
         for row in base_rows:
-            base = Base(
-                name=row["Estado"],
-                location=row["Cidade"],
-                sla_minutes=int(row["SLA"]),
-                min_advance_minutes=120,
-                active=True,
-            )
-            session.add(base)
-            session.flush()
-            bases[(row["Estado"], row["Cidade"])] = base
+            state = str(row["Estado"]).strip()
+            city = str(row["Cidade"]).strip()
+            base = session.exec(select(Base).where(Base.name == state, Base.location == city)).first()
+            if not base:
+                base = Base(
+                    name=state,
+                    location=city,
+                    sla_minutes=int(row["SLA"]),
+                    min_advance_minutes=120,
+                    active=True,
+                )
+                session.add(base)
+                session.flush()
+            bases[(state, city)] = base
 
         seen_links: set[tuple[int, int]] = set()
         for _, row in df.iterrows():
@@ -102,17 +77,25 @@ def migrate() -> None:
             link_key = (company.id, base.id)
             if link_key in seen_links:
                 continue
-            session.add(
-                CompanyBase(
-                    company_id=company.id,
-                    base_id=base.id,
-                    contract_sla_minutes=sla_minutes,
+            
+            existing_link = session.exec(
+                select(CompanyBase).where(
+                    CompanyBase.company_id == company.id,
+                    CompanyBase.base_id == base.id,
                 )
-            )
+            ).first()
+            if not existing_link:
+                session.add(
+                    CompanyBase(
+                        company_id=company.id,
+                        base_id=base.id,
+                        contract_sla_minutes=sla_minutes,
+                    )
+                )
             seen_links.add(link_key)
 
         partner = session.exec(select(User).where(User.email == "parceiro@logtudo.local")).first()
-        if partner and company_order:
+        if partner and company_order and partner.company_id is None:
             first_company = companies[company_order[0]]
             partner.company_id = first_company.id
             partner.company_name = first_company.name
@@ -120,14 +103,21 @@ def migrate() -> None:
             session.add(partner)
 
         supervisor = session.exec(select(User).where(User.email == "supervisor@logtudo.local")).first()
-        if supervisor and base_rows:
+        if supervisor and base_rows and supervisor.base_id is None:
             first_base = bases[(base_rows[0]["Estado"], base_rows[0]["Cidade"])]
             supervisor.base_id = first_base.id
             supervisor.company_name = "Logtudo"
             supervisor.role = UserRole.BASE_SUPERVISOR
             session.add(supervisor)
-            session.exec(delete(UserBaseLink).where(UserBaseLink.user_id == supervisor.id))
-            session.add(UserBaseLink(user_id=supervisor.id, base_id=first_base.id))
+            
+            existing_user_base_link = session.exec(
+                select(UserBaseLink).where(
+                    UserBaseLink.user_id == supervisor.id,
+                    UserBaseLink.base_id == first_base.id
+                )
+            ).first()
+            if not existing_user_base_link:
+                session.add(UserBaseLink(user_id=supervisor.id, base_id=first_base.id))
 
         session.commit()
 

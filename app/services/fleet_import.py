@@ -116,13 +116,7 @@ def import_fleet_from_excel(session: Session, xlsx_path: str | Path) -> ImportSu
             summary.bases_created += 1
 
         vehicle = session.exec(select(Vehicle).where(Vehicle.plate == plate)).first()
-        if vehicle:
-            vehicle.base_id = base.id
-            vehicle.vehicle_type = vehicle_type or vehicle.vehicle_type or "NA"
-            vehicle.active = True
-            session.add(vehicle)
-            summary.vehicles_updated += 1
-        else:
+        if not vehicle:
             vehicle = Vehicle(
                 plate=plate,
                 base_id=base.id,
@@ -138,12 +132,7 @@ def import_fleet_from_excel(session: Session, xlsx_path: str | Path) -> ImportSu
         driver = session.exec(
             select(Driver).where(and_(Driver.base_id == base.id, Driver.name == driver_name))
         ).first()
-        if driver:
-            driver.vehicle_id = vehicle.id
-            driver.active = True
-            session.add(driver)
-            summary.drivers_updated += 1
-        else:
+        if not driver:
             session.add(
                 Driver(
                     name=driver_name,

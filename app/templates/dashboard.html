@@ -92,7 +92,7 @@
             <button
               hx-get="/requests/{{ req.id }}/supervisor-panel?user_id={{ user.id }}"
               hx-target="#supervisor-panel"
-              hx-swap="innerHTML"
+              hx-swap="outerHTML"
               type="button"
             >
               Abrir painel
@@ -147,9 +147,7 @@
 </section>
 
 {% if user.role.value in ['base_supervisor','logistics_manager'] %}
-<section id="supervisor-panel" class="surface-block">
   {% include '_supervisor_panel.html' %}
-</section>
 {% endif %}
 
 {% if user.role.value in ['finance_readonly','logistics_manager'] %}

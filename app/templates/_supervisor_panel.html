@@ -1,61 +1,253 @@
-<section>
-  <h3>Painel de despacho</h3>
+<section id="supervisor-panel" class="panel">
+  <div class="panel-header" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem; border-bottom: 1px solid var(--line); padding-bottom: 0.5rem; flex-wrap: wrap; gap: 0.5rem;">
+    <h3 style="margin: 0; font-family: 'Sora', sans-serif;">Painel de despacho</h3>
+    {% if selected_request %}
+      <div style="display: inline-flex; align-items: center; gap: 0.5rem;">
+        <span class="muted" style="font-size: 0.8rem;">Status da viagem:</span>
+        <span class="pill {{ selected_request.status.value }}">{{ selected_request_status_label or selected_request.status.value }}</span>
+      </div>
+    {% endif %}
+  </div>
+
   {% if not selected_request %}
     <p class="muted">Selecione uma solicitação para carregar motoristas e veículos da base.</p>
   {% else %}
-    <div class="selected-meta" data-selected-request-id="{{ selected_request.id }}">
-      <span><strong>Protocolo:</strong> {{ selected_request.protocol }}</span>
-      <span><strong>Base:</strong> {{ selected_request.base_id }}</span>
-      <span><strong>Status:</strong> <span class="pill {{ selected_request.status.value }}">{{ selected_request_status_label or selected_request.status.value }}</span></span>
+    <!-- Metadata card of the selected Travel Request -->
+    <div class="selected-meta-card" data-selected-request-id="{{ selected_request.id }}">
+      <div class="selected-meta-item">
+        <span>Protocolo</span>
+        <strong>{{ selected_request.protocol }}</strong>
+      </div>
+      <div class="selected-meta-item">
+        <span>Origem / Destino</span>
+        <strong>{{ selected_request.origin }} &rarr; {{ selected_request.destination }}</strong>
+      </div>
+      <div class="selected-meta-item">
+        <span>Veículo Solicitado</span>
+        <strong>{{ selected_request.vehicle_type_requested }} (Qtd: {{ selected_request.quantity }})</strong>
+      </div>
+      <div class="selected-meta-item">
+        <span>Data/Hora Solicitada</span>
+        <strong>{{ selected_request.requested_datetime.strftime('%d/%m/%Y às %H:%M') }}</strong>
+      </div>
     </div>
 
-    <div class="driver-list">
+    <!-- Live Search and Quick Filter Bar -->
+    <div class="driver-filters-bar">
+      <div class="driver-search-wrapper">
+        <span class="driver-search-icon">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+        </span>
+        <input type="text" id="driver-search-input" class="driver-search-input" placeholder="Buscar motorista por nome..." onkeyup="filterDrivers()" />
+      </div>
+      <div class="driver-status-filters">
+        <button type="button" class="filter-badge-btn active" onclick="filterByStatus('all', this)">Todos</button>
+        <button type="button" class="filter-badge-btn" onclick="filterByStatus('available', this)">Disponíveis</button>
+        <button type="button" class="filter-badge-btn" onclick="filterByStatus('in_route', this)">Em rota</button>
+        <button type="button" class="filter-badge-btn" onclick="filterByStatus('absent', this)">Ausentes</button>
+      </div>
+    </div>
+
+    <!-- Drivers Cards Grid -->
+    <div class="driver-cards-grid" id="driver-grid-list">
       {% for driver in drivers_for_selected %}
       {% set d_status = {
           'available': 'Disponível',
           'absent': 'Ausente',
           'in_route': 'Em rota'
       }.get(driver.activity_status.value, driver.activity_status.value) %}
-      <div class="driver-row">
-        <div>
-          <strong>{{ driver.name }}</strong><br/>
-          <small>{{ driver.phone or "Sem telefone" }}</small>
-        </div>
-        <span class="pill status-{{ driver.activity_status.value }}">{{ d_status }}</span>
-      </div>
-      <div class="driver-actions">
-        {% if driver.phone %}
-        <a class="button-like" href="https://wa.me/{{ driver.phone | replace('+', '') | replace(' ', '') }}" target="_blank">Contato</a>
-        {% endif %}
-
-        <form method="post" action="/empresa/drivers/{{ driver.id }}/status?selected_request_id={{ selected_request.id }}">
-          {% if driver.activity_status.value == 'absent' %}
-          <input type="hidden" name="status" value="available" />
-          <button type="submit">Marcar disponível</button>
-          {% else %}
-          <input type="hidden" name="status" value="absent" />
-          <button type="submit" {% if driver.activity_status.value == 'in_route' %}disabled{% endif %}>Marcar ausente</button>
+      
+      {% set is_pre_selected = False %}
+      {% if confirmation %}
+        {% if confirmation.driver_ids %}
+          {% set pre_selected_ids = confirmation.driver_ids.split(', ') %}
+          {% if driver.id|string in pre_selected_ids %}
+            {% set is_pre_selected = True %}
           {% endif %}
-        </form>
-
-        {% if selected_request.status.value == 'accepted' %}
-        <form method="post" action="/empresa/requests/{{ selected_request.id }}/dispatch">
-          <label>Veículo
-            <select name="vehicle_id" required>
-              {% for v in vehicles_for_selected %}
-              <option value="{{ v.id }}">{{ v.plate }} ({{ v.vehicle_type }})</option>
-              {% endfor %}
-            </select>
-          </label>
-          <input type="hidden" name="driver_id" value="{{ driver.id }}" />
-          <label>Saída prevista
-            <input type="datetime-local" name="planned_departure_at" required />
-          </label>
-          <button type="submit" {% if driver.activity_status.value != 'available' %}disabled{% endif %}>Despachar</button>
-        </form>
+        {% elif confirmation.driver_id == driver.id %}
+          {% set is_pre_selected = True %}
         {% endif %}
+      {% endif %}
+
+      <!-- Driver Profile Card -->
+      <div class="driver-profile-card {% if is_pre_selected %}pre-selected-driver-card{% endif %}" data-driver-name="{{ driver.name | lower }}" data-driver-status="{{ driver.activity_status.value }}">
+        <div>
+          <!-- Header (Name, phone and status badge) -->
+          <div class="driver-card-header">
+            <div class="driver-card-name-sec">
+              <strong>{{ driver.name }}</strong>
+              <small>{{ driver.phone or "Sem telefone cadastrado" }}</small>
+              {% if is_pre_selected %}
+                <span class="pill green" style="margin-top: 0.3rem; font-size: 0.62rem; padding: 0.1rem 0.4rem; display: inline-block;">Pré-escalado</span>
+              {% endif %}
+            </div>
+            <span class="pill status-{{ driver.activity_status.value }}">{{ d_status }}</span>
+          </div>
+
+          <!-- Vehicle and Base Information -->
+          <div class="driver-card-info-body">
+            <div class="driver-card-info-item">
+              <span>Veículo Padrão:</span>
+              <strong>
+                {% if driver.vehicle %}
+                  {{ driver.vehicle.plate }} ({{ driver.vehicle.vehicle_type }})
+                {% else %}
+                  <span class="muted">Nenhum</span>
+                {% endif %}
+              </strong>
+            </div>
+            <div class="driver-card-info-item">
+              <span>Atualizado em:</span>
+              <strong>{{ driver.status_updated_at.strftime('%d/%m/%Y %H:%M') }}</strong>
+            </div>
+          </div>
+        </div>
+
+        <!-- Action Section -->
+        <div class="driver-card-actions-wrapper">
+          <!-- Quick Contact buttons -->
+          <div class="driver-card-quick-contact">
+            {% if driver.phone %}
+              {% set clean_phone = driver.phone | replace(' ', '') | replace('-', '') | replace('+', '') | replace('(', '') | replace(')', '') %}
+              {% set wa_num = clean_phone if clean_phone.startswith('55') else '55' ~ clean_phone %}
+              
+              <!-- Professional pre-filled message -->
+              {% set wa_msg = "Olá, " ~ driver.name ~ "! Você está disponível para realizar a viagem extra de protocolo " ~ selected_request.protocol ~ "?\n\n*Detalhes da Viagem:*\n• Origem: " ~ selected_request.origin ~ "\n• Destino: " ~ selected_request.destination ~ "\n• Data/Hora solicitada: " ~ selected_request.requested_datetime.strftime('%d/%m/%Y às %H:%M') ~ "\n\nPor favor, confirme se você está disponível." %}
+              
+              <!-- WhatsApp green button -->
+              <a href="https://wa.me/{{ wa_num }}?text={{ wa_msg | urlencode }}" 
+                 target="_blank" 
+                 class="contact-action-btn whatsapp" 
+                 title="Conversar no WhatsApp">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12.012 2c-5.506 0-9.989 4.478-9.99 9.984a9.96 9.96 0 0 0 1.333 4.993L2 22l5.233-1.371A9.927 9.927 0 0 0 12.008 22c5.506 0 9.989-4.478 9.99-9.986 0-2.67-1.037-5.18-2.92-7.062A9.923 9.923 0 0 0 12.012 2zm5.845 14.242c-.254.717-1.48 1.403-2.036 1.48-.553.078-1.26.11-2.052-.144a10.29 10.29 0 0 1-5.182-3.149 11.233 11.233 0 0 1-2.42-3.568c-.443-.759-.728-1.579-.762-2.434-.035-.867.291-1.611.83-2.14.267-.26.586-.312.83-.312h.59c.19 0 .428.016.634.468.223.49.762 1.84.828 1.974.066.134.11.29.02.468-.09.177-.134.29-.267.447-.134.156-.282.35-.402.47-.134.133-.274.279-.118.547a8.472 8.472 0 0 0 1.547 1.916 7.643 7.643 0 0 0 2.234 1.383c.272.134.433.112.593-.067.156-.178.68-.79.862-1.06.182-.27.362-.223.614-.134.254.09 1.61.758 1.888.897.279.14.463.206.53.32.066.117.066.68-.188 1.397z"/></svg>
+                WhatsApp
+              </a>
+              
+              <!-- Direct telephone call link -->
+              <a href="tel:+{{ wa_num }}" 
+                 class="contact-action-btn call" 
+                 title="Ligar para o motorista">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z"></path></svg>
+                Ligar
+              </a>
+              
+              <!-- Copy driver & trip info to clipboard -->
+              <button type="button" 
+                      class="contact-action-btn copy" 
+                      title="Copiar dados da escala"
+                      onclick="copyDriverDetails('{{ driver.name }}', '{{ driver.phone }}', '{{ driver.vehicle.plate if driver.vehicle else "Sem veículo padrão" }}', '{{ selected_request.protocol }}')">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                Copiar
+              </button>
+            {% else %}
+              <div class="muted" style="grid-column: 1 / -1; text-align: center; font-size: 0.75rem; padding: 0.45rem;">Sem opções de contato</div>
+            {% endif %}
+          </div>
+
+          <!-- Status toggle and Dispatch forms -->
+          <div class="driver-card-status-controls">
+            <!-- Mark as available or absent -->
+            <form method="post" action="/empresa/drivers/{{ driver.id }}/status?selected_request_id={{ selected_request.id }}">
+              {% if driver.activity_status.value == 'absent' %}
+                <input type="hidden" name="status" value="available" />
+                <button type="submit" class="status-control-btn available">Marcar disponível</button>
+              {% else %}
+                <input type="hidden" name="status" value="absent" />
+                <button type="submit" class="status-control-btn absent" {% if driver.activity_status.value == 'in_route' %}disabled{% endif %}>Marcar ausente</button>
+              {% endif %}
+            </form>
+
+          </div>
+        </div>
       </div>
       {% endfor %}
     </div>
+
+    <!-- Javascript Actions for client-side search, status filters and copy feature -->
+    <script>
+      /**
+       * Filters the driver cards by search input value (driver name) and active status filter
+       */
+      function filterDrivers() {
+        const rawInput = document.getElementById('driver-search-input').value;
+        const searchQuery = rawInput.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
+        
+        const activeBtn = document.querySelector('.filter-badge-btn.active');
+        const activeStatusFilter = activeBtn ? activeBtn.textContent.trim().toLowerCase() : 'todos';
+
+        document.querySelectorAll('.driver-profile-card').forEach(card => {
+          const driverName = card.getAttribute('data-driver-name').normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+          const driverStatus = card.getAttribute('data-driver-status');
+
+          const matchesSearch = driverName.includes(searchQuery);
+          let matchesStatus = true;
+
+          if (activeStatusFilter === 'disponíveis' && driverStatus !== 'available') matchesStatus = false;
+          if (activeStatusFilter === 'em rota' && driverStatus !== 'in_route') matchesStatus = false;
+          if (activeStatusFilter === 'ausentes' && driverStatus !== 'absent') matchesStatus = false;
+
+          if (matchesSearch && matchesStatus) {
+            card.style.display = 'flex';
+          } else {
+            card.style.display = 'none';
+          }
+        });
+      }
+
+      /**
+       * Handles switching active status filter badge and triggers filtering
+       */
+      function filterByStatus(status, buttonElement) {
+        document.querySelectorAll('.filter-badge-btn').forEach(btn => {
+          btn.classList.remove('active');
+        });
+        buttonElement.classList.add('active');
+        
+        filterDrivers();
+      }
+
+      /**
+       * Copies driver details to clipboard and shows a temporary toast message
+       */
+      function copyDriverDetails(name, phone, vehicle, protocol) {
+        const textToCopy = `Escala de Motorista - Central Logtudo\n` + 
+                           `----------------------------------\n` + 
+                           `Motorista: ${name}\n` + 
+                           `Telefone: ${phone}\n` + 
+                           `Veículo: ${vehicle}\n` + 
+                           `Protocolo da Viagem Extra: ${protocol}`;
+                           
+        navigator.clipboard.writeText(textToCopy).then(() => {
+          // Create a temporary toast feedback element
+          const toast = document.createElement('div');
+          toast.textContent = 'Dados copiados para a área de transferência! 📋';
+          toast.style.position = 'fixed';
+          toast.style.bottom = '24px';
+          toast.style.right = '24px';
+          toast.style.background = 'var(--deep)';
+          toast.style.color = '#fff';
+          toast.style.padding = '0.75rem 1.25rem';
+          toast.style.borderRadius = '10px';
+          toast.style.zIndex = '99999';
+          toast.style.boxShadow = '0 8px 24px rgba(34, 51, 59, 0.16)';
+          toast.style.fontFamily = '"Plus Jakarta Sans", sans-serif';
+          toast.style.fontSize = '0.82rem';
+          toast.style.fontWeight = '700';
+          toast.style.transition = 'opacity 0.2s ease';
+          
+          document.body.appendChild(toast);
+          
+          // Remove the toast after 2 seconds
+          setTimeout(() => {
+            toast.style.opacity = '0';
+            setTimeout(() => {
+              toast.remove();
+            }, 200);
+          }, 2000);
+        }).catch(err => {
+          console.error('Falha ao copiar dados: ', err);
+        });
+      }
+    </script>
   {% endif %}
 </section>

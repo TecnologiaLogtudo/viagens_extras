@@ -30,11 +30,24 @@
         {% endfor %}
       </select>
     </label>
-    <label class="full">
-      <input type="checkbox" name="active" value="1" {% if not edit_driver or edit_driver.active %}checked{% endif %} />
-      <span>Motorista ativo</span>
+    <label>Categoria do veículo
+      <select name="vehicle_type">
+        <option value="">Selecione</option>
+        {% for cat in ["3/4", "BITRUCK", "BONGO", "CAMINHÃO", "CARRETA", "CAVALO", "CENTRAL", "EFFA", "FIORINO", "FORD", "HR", "KOMBI", "MOTO", "TRUCK", "VAN", "VUCK", "VW"] %}
+        <option value="{{ cat }}"{% if edit_driver and edit_driver.vehicle and edit_driver.vehicle.vehicle_type|upper == cat %} selected{% endif %}>{{ cat }}</option>
+        {% endfor %}
+      </select>
     </label>
-    <button type="submit">{{ "Salvar alterações" if edit_driver else "Cadastrar Motorista" }}</button>
+    <label>Placa
+      <input name="plate" value="{{ edit_driver.vehicle.plate if edit_driver and edit_driver.vehicle else '' }}" placeholder="Ex: ABC1234" style="text-transform: uppercase;" />
+    </label>
+    {% if edit_driver %}
+    <label class="full" style="display: flex; align-items: center; gap: 0.5rem; margin: 0.25rem 0 0.5rem 0;">
+      <input type="checkbox" name="active" value="1" {% if edit_driver.active %}checked{% endif %} style="width: auto;" />
+      Ativo
+    </label>
+    {% endif %}
+    <button type="submit" class="button-like" style="width: fit-content;">{{ "Salvar alterações" if edit_driver else "Cadastrar Motorista" }}</button>
     {% if edit_driver %}
     <a class="pill" href="/empresa/motoristas">Cancelar edição</a>
     {% endif %}
@@ -43,6 +56,38 @@
 {% endif %}
 
 <section class="panel">
+  <!-- Filtros da tabela -->
+  <div class="filters-row" style="display: flex; gap: 1rem; margin-bottom: 1.2rem; align-items: center; flex-wrap: wrap; background: #fffcf5; border: 1px dashed var(--line); border-radius: 12px; padding: 0.65rem 0.85rem;">
+    <label style="margin: 0; display: flex; align-items: center; gap: 0.5rem; font-weight: 700; font-size: 0.82rem; color: var(--muted);">
+      Filtrar por Base:
+      <select name="filter_base_id" 
+              hx-get="/empresa/motoristas/fragments/list" 
+              hx-include="[name='filter_base_id'], [name='filter_vehicle_type']" 
+              hx-target="#drivers-list" 
+              hx-swap="outerHTML" 
+              style="width: auto; padding: 0.28rem 0.45rem; border-radius: 8px; font-size: 0.8rem; background: #fffdfc; border: 1px solid #c8bfae;">
+        <option value="">Todas</option>
+        {% for fb in filter_bases %}
+        <option value="{{ fb.id }}"{% if filter_base_id == fb.id %} selected{% endif %}>{{ fb.name }} - {{ fb.location }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label style="margin: 0; display: flex; align-items: center; gap: 0.5rem; font-weight: 700; font-size: 0.82rem; color: var(--muted);">
+      Filtrar por Categoria:
+      <select name="filter_vehicle_type" 
+              hx-get="/empresa/motoristas/fragments/list" 
+              hx-include="[name='filter_base_id'], [name='filter_vehicle_type']" 
+              hx-target="#drivers-list" 
+              hx-swap="outerHTML" 
+              style="width: auto; padding: 0.28rem 0.45rem; border-radius: 8px; font-size: 0.8rem; background: #fffdfc; border: 1px solid #c8bfae;">
+        <option value="">Todas</option>
+        {% for cat in ["3/4", "BITRUCK", "BONGO", "CAMINHÃO", "CARRETA", "CAVALO", "CENTRAL", "EFFA", "FIORINO", "FORD", "HR", "KOMBI", "MOTO", "TRUCK", "VAN", "VUCK", "VW"] %}
+        <option value="{{ cat }}"{% if filter_vehicle_type == cat %} selected{% endif %}>{{ cat }}</option>
+        {% endfor %}
+      </select>
+    </label>
+  </div>
+
   <div id="drivers-list">
     {% include '_drivers_table.html' %}
   </div>

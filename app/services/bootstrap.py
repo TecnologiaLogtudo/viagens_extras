@@ -11,6 +11,20 @@ from app.models import Base, Company, CompanyBase, User, UserCompanyBaseLink, Us
 
 BASES_XLSX = Path("Bases operacionais.xlsx")
 
+def is_database_seeded(session: Session) -> bool:
+    """Return True when the database already has the expected baseline seed state.
+
+    This prevents repeated startup seeding from altering existing production data
+    after schema migrations or application restarts.
+    """
+    if session.exec(select(Company).limit(1)).first() is None:
+        return False
+    if session.exec(select(Base).limit(1)).first() is None:
+        return False
+    if session.exec(select(User).where(User.email == "gerente@logtudo.local")).first() is None:
+        return False
+    return True
+
 
 def _placeholder_cnpj(index: int) -> str:
     return f"00.000.000/0001-{index:02d}"
@@ -54,11 +68,6 @@ def seed_catalog_from_workbook(session: Session, bases_path: Path | str = BASES_
             )
             session.add(base)
             session.flush()
-        else:
-            base.sla_minutes = sla_minutes
-            base.min_advance_minutes = 120
-            base.active = True
-            session.add(base)
         bases[(state, city)] = base
 
     seen_links: set[tuple[int, int]] = set()
@@ -82,9 +91,6 @@ def seed_catalog_from_workbook(session: Session, bases_path: Path | str = BASES_
                     contract_sla_minutes=int(row["SLA"]) if pd.notna(row["SLA"]) else 30,
                 )
             )
-        else:
-            existing_link.contract_sla_minutes = int(row["SLA"]) if pd.notna(row["SLA"]) else 30
-            session.add(existing_link)
         seen_links.add(link_key)
 
     session.commit()
@@ -114,32 +120,77 @@ def migrate_supervisor_company_base_links(session: Session) -> None:
     session.commit()
 
 
-def seed_manager_user(session: Session) -> None:
-    manager = session.exec(select(User).where(User.email == "gerente@logtudo.local")).first()
-    if manager:
-        manager.full_name = "Gerente Logtudo"
-        manager.role = UserRole.LOGISTICS_MANAGER
-        manager.company_name = "Logtudo"
-        manager.password_hash = hash_password("gerente123")
-        manager.is_active = True
-        session.add(manager)
-        session.commit()
-        return
-
-    session.add(
-        User(
-            full_name="Gerente Logtudo",
-            email="gerente@logtudo.local",
-            role=UserRole.LOGISTICS_MANAGER,
-            company_name="Logtudo",
-            password_hash=hash_password("gerente123"),
-            is_active=True,
+def seed_default_users(session: Session) -> None:
+    # Manager
+    if not session.exec(select(User).where(User.email == "gerente@logtudo.local")).first():
+        session.add(
+            User(
+                full_name="Gerente Logtudo",
+                email="gerente@logtudo.local",
+                role=UserRole.LOGISTICS_MANAGER,
+                company_name="Logtudo",
+                password_hash=hash_password("gerente123"),
+                is_active=True,
+            )
         )
-    )
+
+    # Partner (requires a company)
+    if not session.exec(select(User).where(User.email == "parceiro@logtudo.local")).first():
+        company = session.exec(select(Company).order_by(Company.id)).first()
+        if company:
+            session.add(
+                User(
+                    full_name="Parceiro Teste",
+                    email="parceiro@logtudo.local",
+                    role=UserRole.PARTNER_REQUESTER,
+                    company_id=company.id,
+                    company_name=company.name,
+                    password_hash=hash_password("parceiro123"),
+                    is_active=True,
+                )
+            )
+
+    # Supervisor (requires a base)
+    if not session.exec(select(User).where(User.email == "supervisor@logtudo.local")).first():
+        # Prefer BA - Salvador where the spreadsheet fleet is loaded
+        base = session.exec(select(Base).where(Base.name == "BA", Base.location == "Salvador")).first()
+        if not base:
+            base = session.exec(select(Base).order_by(Base.id)).first()
+        if base:
+            supervisor = User(
+                full_name="Supervisor Teste",
+                email="supervisor@logtudo.local",
+                role=UserRole.BASE_SUPERVISOR,
+                base_id=base.id,
+                company_name="Logtudo",
+                password_hash=hash_password("supervisor123"),
+                is_active=True,
+            )
+            session.add(supervisor)
+            session.flush()
+
+            # Automatically create UserCompanyBaseLink for the supervisor's base
+            company_bases = session.exec(select(CompanyBase).where(CompanyBase.base_id == base.id)).all()
+            for cb in company_bases:
+                session.add(UserCompanyBaseLink(user_id=supervisor.id, company_base_id=cb.id))
+
+    # Finance
+    if not session.exec(select(User).where(User.email == "financeiro@logtudo.local")).first():
+        session.add(
+            User(
+                full_name="Financeiro Logtudo",
+                email="financeiro@logtudo.local",
+                role=UserRole.FINANCE_READONLY,
+                company_name="Logtudo",
+                password_hash=hash_password("financeiro123"),
+                is_active=True,
+            )
+        )
+
     session.commit()
 
 
 def seed_runtime_data(session: Session) -> None:
     seed_catalog_from_workbook(session)
+    seed_default_users(session)
     migrate_supervisor_company_base_links(session)
-    seed_manager_user(session)

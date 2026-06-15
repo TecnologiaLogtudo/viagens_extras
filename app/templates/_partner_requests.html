@@ -19,7 +19,7 @@
             <div class="actions-container">
               {% if conf %}
                 <details class="negotiation-box">
-                  <summary class="button-like">{% if req.status.value == 'confirmed' %}Revisar Confirmação{% else %}Ver Detalhes{% endif %}</summary>
+                  <summary class="button-like">{% if req.status.value in ['confirmed', 'accepted', 'completed'] %}Detalhes da Confirmação{% else %}Ver Detalhes{% endif %}</summary>
                   <div class="hint-box" style="margin-top: 0.5rem; border-color: #d77a61; background: #fffcfb; min-width: 280px;">
                     <strong>Aprovação Operacional:</strong><br/>
                     <div style="font-size: 0.85rem; margin: 0.4rem 0;">
@@ -27,35 +27,20 @@
                       • <strong>Veículo:</strong> {{ conf.confirmed_vehicle_type }}<br/>
                       • <strong>Data/Hora:</strong> {{ conf.confirmed_datetime.strftime('%d/%m/%Y %H:%M') }}<br/>
                       • <strong>Tarifa:</strong> R$ {{ "%.2f"|format(conf.tariff_value) }}<br/>
+                      {% if conf.driver_ids %}
+                        • <strong>Motoristas Alocados:</strong><br/>
+                        {% set allocated_driver_ids = conf.driver_ids.split(', ') %}
+                        {% for d_id_str in allocated_driver_ids %}
+                          {% set d_id = d_id_str | int %}
+                          {% if d_id in drivers_map %}
+                            &nbsp;&nbsp;- {{ drivers_map[d_id].name }} {% if drivers_map[d_id].phone %}({{ drivers_map[d_id].phone }}){% endif %}<br/>
+                          {% endif %}
+                        {% endfor %}
+                      {% elif conf.driver_id and conf.driver_id in drivers_map %}
+                        • <strong>Motorista:</strong> {{ drivers_map[conf.driver_id].name }} {% if drivers_map[conf.driver_id].phone %}({{ drivers_map[conf.driver_id].phone }}){% endif %}<br/>
+                      {% endif %}
                       {% if conf.observations %}• <strong>Obs:</strong> {{ conf.observations }}{% endif %}
                     </div>
-                    {% if req.status.value == 'confirmed' %}
-                    <div style="display: flex; gap: 0.4rem; margin-top: 0.8rem;">
-                      <form method="post" action="/partner/requests/{{ req.id }}/otp">
-                        <button type="submit" style="background: var(--accent-2); padding: 0.4rem 0.6rem;">Aceitar e Validar</button>
-                      </form>
-                      <details style="flex: 1; border: none; padding: 0; background: transparent;">
-                        <summary class="button-like" style="background: var(--warn); padding: 0.4rem 0.6rem;">Propor Mudança</summary>
-                        <form class="form-grid" style="margin-top: 0.6rem; border: 1px dashed var(--warn); padding: 0.6rem; border-radius: 6px;" method="post" action="/partner/requests/{{ req.id }}/propose-change">
-                          <label style="font-size: 0.7rem;">Nova Data/Hora
-                            <input type="datetime-local" name="requested_datetime" value="{{ conf.confirmed_datetime.strftime('%Y-%m-%dT%H:%M') }}" required />
-                          </label>
-                          <label style="font-size: 0.7rem;">Nova Qtd
-                            <input type="number" name="quantity" value="{{ conf.approved_quantity }}" min="1" required />
-                          </label>
-                          <label style="font-size: 0.7rem;">Veículo
-                            <input name="vehicle_type_requested" value="{{ conf.confirmed_vehicle_type }}" required />
-                          </label>
-                          <label class="full" style="font-size: 0.7rem;">Motivo da Mudança
-                            <input name="reason" placeholder="por que deseja alterar?" required />
-                          </label>
-                          <input type="hidden" name="origin" value="{{ req.origin }}" />
-                          <input type="hidden" name="destination" value="{{ req.destination }}" />
-                          <button class="full" type="submit" style="font-size: 0.75rem;">Enviar Proposta</button>
-                        </form>
-                      </details>
-                    </div>
-                    {% endif %}
                   </div>
                 </details>
               {% endif %}
@@ -70,7 +55,7 @@
                         <input type="datetime-local" name="requested_datetime" value="{{ req.requested_datetime.strftime('%Y-%m-%dT%H:%M') }}" required />
                       </label>
                       <label style="font-size: 0.7rem;">Qtd
-                        <input type="number" name="quantity" value="{{ req.quantity }}" min="1" required />
+                        <input type="number" name="quantity" id="edit-qty-{{ req.id }}" value="{{ req.quantity }}" min="1" required oninput="updateEditVehicleSelects({{ req.id }}, 'edit')" />
                       </label>
                       <label style="font-size: 0.7rem;">Origem
                         <input name="origin" value="{{ req.origin }}" required />
@@ -78,12 +63,9 @@
                       <label style="font-size: 0.7rem;">Destino
                         <input name="destination" value="{{ req.destination }}" required />
                       </label>
-                      <label style="font-size: 0.7rem;">Veículo
-                        <input name="vehicle_type_requested" value="{{ req.vehicle_type_requested }}" required />
-                      </label>
-                      <label style="font-size: 0.7rem;">Centro Custo
-                        <input name="cost_center" value="{{ req.cost_center or '' }}" />
-                      </label>
+                      <div id="edit-vehicles-container-{{ req.id }}" class="full" style="display: grid; grid-template-columns: 1fr; gap: 0.4rem; grid-column: 1 / -1;">
+                        <!-- Dynamically generated selects -->
+                      </div>
                       <label class="full" style="font-size: 0.7rem;">Motivo/Notas
                         <textarea name="notes" placeholder="informe o que mudou">{{ req.notes or '' }}</textarea>
                       </label>
@@ -93,15 +75,22 @@
                   </div>
                 </details>
               {% endif %}
+              <script>
+                {% if conf %}
+                updateEditVehicleSelects({{ req.id }}, 'propose', '{{ conf.confirmed_vehicle_type }}');
+                {% endif %}
+                updateEditVehicleSelects({{ req.id }}, 'edit', '{{ req.vehicle_type_requested }}');
+              </script>
 
-              {% if not conf and req.status.value == 'confirmed' %}
-                <form method="post" action="/partner/requests/{{ req.id }}/otp" class="inline">
-                  <button type="submit">Validar</button>
-                </form>
+              {% if not conf and req.status.value not in ['submitted', 'triage', 'confirmed', 'completed'] %}
+                <span class="muted">Sem ações</span>
               {% endif %}
 
-              {% if not conf and req.status.value not in ['submitted', 'triage', 'confirmed'] %}
-                <span class="muted">Sem ações</span>
+              {% if req.status.value in ['confirmed', 'accepted', 'in_execution', 'completed'] %}
+                <a href="/requests/{{ req.id }}/comprovante" class="button-like download-btn" target="_blank" style="background: var(--success, #2ec4b6); color: white; padding: 0.4rem 0.6rem; text-decoration: none; border-radius: 4px; font-size: 0.85rem; display: inline-flex; align-items: center; gap: 0.3rem;">
+                  <svg style="width: 14px; height: 14px; fill: currentColor;" viewBox="0 0 24 24"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></svg>
+                  Comprovante
+                </a>
               {% endif %}
 
               {% if cancel_available.get(req.id) %}
@@ -117,3 +106,57 @@
     </table>
   </div>
 </section>
+
+<script>
+  function updateEditVehicleSelects(reqId, type, defaultVtsStr) {
+    const qtyInput = document.getElementById(type + '-qty-' + reqId);
+    const container = document.getElementById(type + '-vehicles-container-' + reqId);
+    if (!qtyInput || !container) return;
+    
+    let qty = parseInt(qtyInput.value) || 1;
+    if (qty < 1) qty = 1;
+    
+    container.innerHTML = '';
+    
+    let vtDefaults = [];
+    if (defaultVtsStr) {
+      vtDefaults = defaultVtsStr.split(',').map(s => s.trim().toLowerCase());
+    }
+    
+    const globalVehicleTypes = {{ vehicle_types | tojson }};
+    
+    for (let i = 0; i < qty; i++) {
+      const label = document.createElement('label');
+      label.style.fontSize = '0.7rem';
+      label.style.display = 'block';
+      label.style.width = '100%';
+      
+      const labelText = qty > 1 ? `Tipo do Veículo ${i + 1}` : 'Veículo';
+      label.innerHTML = `${labelText} *<br/>`;
+      
+      const select = document.createElement('select');
+      select.name = 'vehicle_type_requested';
+      select.required = true;
+      select.style.padding = '0.25rem';
+      select.style.fontSize = '0.75rem';
+      select.style.width = '100%';
+      select.style.borderRadius = '4px';
+      select.style.border = '1px solid #ccc';
+      
+      globalVehicleTypes.forEach(vt => {
+        const opt = document.createElement('option');
+        opt.value = vt.toLowerCase();
+        opt.textContent = vt;
+        if (vtDefaults[i] && vtDefaults[i] === vt.toLowerCase()) {
+          opt.selected = true;
+        } else if (!vtDefaults[i] && vt.toLowerCase() === 'sedan') {
+          opt.selected = true;
+        }
+        select.appendChild(opt);
+      });
+      
+      label.appendChild(select);
+      container.appendChild(label);
+    }
+  }
+</script>

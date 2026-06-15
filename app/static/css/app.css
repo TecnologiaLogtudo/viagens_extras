@@ -443,6 +443,66 @@ th, td {
   min-width: 75px;
 }
 
+/* Drivers Table Column Sizing */
+.drivers-table {
+  width: 100%;
+}
+
+.drivers-table th.col-checkbox,
+.drivers-table td.col-checkbox {
+  width: 40px;
+  min-width: 40px;
+  max-width: 40px;
+  text-align: center;
+}
+
+.drivers-table th.col-name,
+.drivers-table td.col-name {
+  width: 25%;
+  min-width: 160px;
+}
+
+.drivers-table th.col-phone,
+.drivers-table td.col-phone {
+  width: 15%;
+  min-width: 120px;
+  white-space: nowrap;
+}
+
+.drivers-table th.col-category,
+.drivers-table td.col-category {
+  width: 15%;
+  min-width: 120px;
+}
+
+.drivers-table th.col-base,
+.drivers-table td.col-base {
+  width: 20%;
+  min-width: 140px;
+}
+
+.drivers-table th.col-plate,
+.drivers-table td.col-plate {
+  width: 10%;
+  min-width: 95px;
+  white-space: nowrap;
+}
+
+.drivers-table th.col-status,
+.drivers-table td.col-status {
+  width: 10%;
+  min-width: 90px;
+  white-space: nowrap;
+}
+
+.drivers-table th.col-actions,
+.drivers-table td.col-actions {
+  width: 12%;
+  min-width: 130px;
+  white-space: nowrap;
+}
+
+
 th {
   text-transform: uppercase;
   font-size: 0.7rem;
@@ -600,4 +660,333 @@ details {
   .metrics { grid-template-columns: 1fr; }
   .topbar { align-items: start; flex-direction: column; }
   .table-wrap table { min-width: 540px; }
+}
+
+/* ==========================================================================
+   REVAMPED DRIVER DISPATCH PANEL STYLES
+   ========================================================================== */
+
+.selected-meta-card {
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 1rem;
+  margin-bottom: 1.25rem;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 1rem;
+  box-shadow: 0 2px 5px rgba(0,0,0,0.02);
+}
+
+.selected-meta-item {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.selected-meta-item span {
+  font-size: 0.72rem;
+  color: var(--muted);
+  text-transform: uppercase;
+  font-weight: 800;
+  letter-spacing: 0.05em;
+}
+
+.selected-meta-item strong {
+  font-size: 0.95rem;
+  color: var(--ink);
+}
+
+.driver-filters-bar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1rem;
+  margin-bottom: 1.25rem;
+  flex-wrap: wrap;
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 0.75rem 1rem;
+}
+
+.driver-search-wrapper {
+  position: relative;
+  flex: 1;
+  min-width: 240px;
+}
+
+.driver-search-input {
+  width: 100% !important;
+  padding: 0.5rem 0.75rem 0.5rem 2.2rem !important;
+  border-radius: 8px;
+  border: 1px solid #c8bfae;
+  background: #fffdf9;
+  font-size: 0.85rem;
+}
+
+.driver-search-icon {
+  position: absolute;
+  left: 0.75rem;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--muted);
+  pointer-events: none;
+  display: flex;
+  align-items: center;
+}
+
+.driver-status-filters {
+  display: flex;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+}
+
+.filter-badge-btn {
+  border: 1px solid var(--line);
+  background: var(--paper);
+  color: var(--ink);
+  font-size: 0.75rem;
+  font-weight: 700;
+  padding: 0.35rem 0.75rem;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.filter-badge-btn:hover {
+  background: #f0ebe0;
+  border-color: #bfae94;
+}
+
+.filter-badge-btn.active {
+  background: var(--deep) !important;
+  color: #fff !important;
+  border-color: var(--deep);
+}
+
+.driver-cards-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 1rem;
+  margin-bottom: 1.5rem;
+}
+
+.driver-profile-card {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--paper);
+  padding: 1rem;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.02);
+  transition: transform 0.22s ease, box-shadow 0.22s ease;
+}
+
+.driver-profile-card:hover {
+  transform: translateY(-3px);
+  box-shadow: 0 6px 16px rgba(34, 51, 59, 0.08);
+}
+
+.driver-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 0.75rem;
+  margin-bottom: 0.75rem;
+}
+
+.driver-card-name-sec {
+  min-width: 0;
+}
+
+.driver-card-name-sec strong {
+  font-size: 1rem;
+  font-family: "Sora", sans-serif;
+  color: var(--ink);
+  display: block;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.driver-card-name-sec small {
+  font-size: 0.75rem;
+  color: var(--muted);
+  display: block;
+  margin-top: 0.1rem;
+}
+
+.driver-card-info-body {
+  font-size: 0.8rem;
+  border-top: 1px dashed var(--line);
+  padding-top: 0.75rem;
+  margin-bottom: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.driver-card-info-item {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.driver-card-info-item span {
+  color: var(--muted);
+}
+
+.driver-card-info-item strong {
+  color: var(--ink);
+}
+
+.driver-card-actions-wrapper {
+  margin-top: auto;
+}
+
+.driver-card-quick-contact {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 0.4rem;
+  margin-bottom: 0.75rem;
+}
+
+.contact-action-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.35rem;
+  font-size: 0.75rem;
+  font-weight: 700;
+  padding: 0.45rem 0.5rem;
+  border-radius: 8px;
+  text-decoration: none;
+  cursor: pointer;
+  border: 1px solid transparent;
+  transition: filter 0.15s ease;
+  color: #fff;
+}
+
+.contact-action-btn:hover {
+  filter: brightness(0.92);
+}
+
+.contact-action-btn.whatsapp {
+  background: #25D366 !important;
+}
+
+.contact-action-btn.call {
+  background: #007bff !important;
+}
+
+.contact-action-btn.copy {
+  background: #6c757d !important;
+}
+
+.driver-card-status-controls {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.driver-card-status-controls form {
+  flex: 1;
+}
+
+.status-control-btn {
+  width: 100%;
+  font-size: 0.75rem;
+  font-weight: 700;
+  padding: 0.45rem 0.5rem;
+  border-radius: 8px;
+  border: none;
+  cursor: pointer;
+  color: #fff;
+  transition: opacity 0.15s ease;
+}
+
+.status-control-btn:hover {
+  opacity: 0.9;
+}
+
+.status-control-btn.available {
+  background-color: #28a745;
+}
+
+.status-control-btn.absent {
+  background-color: #dc3545;
+}
+
+.status-control-btn:disabled {
+  background-color: #d3cbb7;
+  color: var(--muted);
+  cursor: not-allowed;
+}
+
+.dispatch-initiate-btn {
+  flex: 1;
+  font-size: 0.75rem;
+  font-weight: 700;
+  padding: 0.45rem 0.5rem;
+  border-radius: 8px;
+  background-color: var(--deep);
+  color: #fff;
+  border: none;
+  cursor: pointer;
+  transition: opacity 0.15s ease;
+}
+
+.dispatch-initiate-btn:hover {
+  opacity: 0.9;
+}
+
+.driver-dispatch-dropdown-form {
+  margin-top: 0.75rem;
+  padding-top: 0.75rem;
+  border-top: 1px dashed var(--line);
+  display: none;
+}
+
+.driver-dispatch-dropdown-form form {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 0.6rem;
+}
+
+.driver-dispatch-dropdown-form label {
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: #4d4737;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+
+.driver-dispatch-dropdown-form select,
+.driver-dispatch-dropdown-form input {
+  padding: 0.35rem 0.5rem;
+  font-size: 0.8rem;
+  border-radius: 6px;
+  border: 1px solid #c8bfae;
+}
+
+.driver-dispatch-dropdown-form .dispatch-confirm-btn {
+  background-color: var(--accent-2);
+  color: #fff;
+  padding: 0.45rem;
+  font-size: 0.8rem;
+  font-weight: 700;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.driver-dispatch-dropdown-form .dispatch-confirm-btn:hover {
+  filter: brightness(1.08);
+}
+
+.driver-profile-card.pre-selected-driver-card {
+  border: 2px solid var(--accent-2) !important;
+  background-color: #f4faf6 !important;
 }

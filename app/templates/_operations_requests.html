@@ -16,11 +16,18 @@
         <td>{{ bases[req.base_id].name }}</td>
         <td><span class="pill {{ sla_color }}">{{ (ratio*100)|round(0) }}%</span></td>
         <td>
-          <button hx-get="/empresa/requests/{{ req.id }}/supervisor-panel" hx-target="#supervisor-panel" hx-swap="innerHTML" type="button">Abrir painel</button>
+          <button hx-get="/empresa/requests/{{ req.id }}/supervisor-panel" hx-target="#supervisor-panel" hx-swap="outerHTML" type="button">Abrir painel</button>
 
-          {% if req.status.value in ['submitted','triage','confirmed'] %}
-          <details {% if req.status.value == 'confirmed' %}class="edit-mode"{% endif %}>
-            <summary>{% if req.status.value == 'confirmed' %}Editar Confirmação{% else %}Triagem{% endif %}</summary>
+          {% if req.status.value in ['confirmed', 'accepted', 'in_execution', 'completed'] %}
+          <a href="/requests/{{ req.id }}/comprovante" class="button-like download-btn" target="_blank" style="background: var(--success, #2ec4b6); color: white; padding: 0.4rem 0.6rem; text-decoration: none; border-radius: 4px; font-size: 0.85rem; display: inline-flex; align-items: center; gap: 0.3rem; margin-left: 0.4rem;">
+            <svg style="width: 14px; height: 14px; fill: currentColor;" viewBox="0 0 24 24"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></svg>
+            Comprovante
+          </a>
+          {% endif %}
+
+          {% if req.status.value in ['submitted','triage','completed'] %}
+          <details {% if req.status.value == 'completed' %}class="edit-mode"{% endif %}>
+            <summary>{% if req.status.value == 'completed' %}Editar Confirmação{% else %}Triagem{% endif %}</summary>
             <div class="hint-box" style="margin: 0.5rem 0 1rem; border: 1px solid #d0e2ff; background: #f0f7ff; color: #002d70; padding: 0.8rem; border-radius: 8px;">
               <div style="font-weight: 800; text-transform: uppercase; font-size: 0.7rem; margin-bottom: 0.4rem; opacity: 0.8;">Solicitação Original:</div>
               <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.4rem; font-size: 0.85rem;">
@@ -42,14 +49,24 @@
                 </select>
               </label>
               <label>Qtd. Aprovada
-                <input type="number" name="approved_quantity" value="{{ conf.approved_quantity if conf else req.quantity }}" min="1" required />
+                <input type="number" name="approved_quantity" data-req-id="{{ req.id }}" value="{{ conf.approved_quantity if conf else req.quantity }}" min="1" required oninput="updateConfirmedVehiclesAndDrivers({{ req.id }})" />
               </label>
               <label>Data/Hora Confirmada
                 <input type="datetime-local" name="confirmed_datetime" value="{{ conf.confirmed_datetime.strftime('%Y-%m-%dT%H:%M') if conf else req.requested_datetime.strftime('%Y-%m-%dT%H:%M') }}" required />
               </label>
-              <label>Veículo Confirmado
-                <input name="confirmed_vehicle_type" value="{{ conf.confirmed_vehicle_type if conf else req.vehicle_type_requested }}" required />
-              </label>
+              <div id="confirmed-vehicles-drivers-container-{{ req.id }}" class="full" style="display: grid; grid-template-columns: 1fr; gap: 0.5rem;">
+                <!-- Dynamically generated selects go here -->
+              </div>
+              <script>
+                window['drivers_' + {{ req.id }}] = [
+                  {% for d in driver_rows %}
+                    {% if d.base_id == req.base_id %}
+                      {id: {{ d.id }}, name: {{ d.name | tojson }}, plate: {{ (d.vehicle.plate if d.vehicle else "") | tojson }}},
+                    {% endif %}
+                  {% endfor %}
+                ];
+                updateConfirmedVehiclesAndDrivers({{ req.id }}, '{{ conf.confirmed_vehicle_type if conf else req.vehicle_type_requested }}', '{{ conf.driver_ids if conf and conf.driver_ids else (conf.driver_id if conf and conf.driver_id else "") }}');
+              </script>
               <label>Valor Tarifa (R$)
                 <input type="number" step="0.01" name="tariff_value" value="{{ conf.tariff_value if conf else '0.00' }}" required />
               </label>
@@ -59,19 +76,7 @@
               <label class="full">Motivo Recusa (se recusar)
                 <input name="refusal_reason" placeholder="obrigatório apenas se a decisão for 'Recusar'" />
               </label>
-              <button class="full" type="submit">{% if req.status.value == 'confirmed' %}Salvar Alterações{% else %}Aplicar Triagem{% endif %}</button>
-            </form>
-          </details>
-          {% endif %}
-
-          {% if req.status.value == 'in_execution' %}
-          <details>
-            <summary>Finalizar</summary>
-            <form method="post" action="/empresa/requests/{{ req.id }}/complete">
-              <input type="datetime-local" name="actual_departure_at" required />
-              <input type="datetime-local" name="actual_arrival_at" required />
-              <input name="occurrences" placeholder="ocorrências" />
-              <button type="submit">Concluir</button>
+              <button class="full" type="submit">{% if req.status.value == 'completed' %}Salvar Alterações{% else %}Aplicar Triagem{% endif %}</button>
             </form>
           </details>
           {% endif %}
@@ -82,3 +87,107 @@
     </table>
   </div>
 </section>
+
+<script>
+function updateConfirmedVehiclesAndDrivers(reqId, defaultVehicleTypes, defaultDriverIds) {
+  const container = document.getElementById('confirmed-vehicles-drivers-container-' + reqId);
+  const approvedQtyInput = document.querySelector('input[name="approved_quantity"][data-req-id="' + reqId + '"]');
+  if (!container || !approvedQtyInput) return;
+  
+  let qty = parseInt(approvedQtyInput.value) || 1;
+  if (qty < 1) qty = 1;
+  
+  container.innerHTML = '';
+  
+  // Parse defaults if they exist
+  let vtDefaults = [];
+  if (defaultVehicleTypes) {
+    vtDefaults = defaultVehicleTypes.split(',').map(s => s.trim().toLowerCase());
+  }
+  let driverDefaults = [];
+  if (defaultDriverIds) {
+    driverDefaults = defaultDriverIds.toString().split(',').map(s => s.trim());
+  }
+  
+  // Grab base drivers list from the global/scoped variable
+  const driversList = window['drivers_' + reqId] || [];
+  
+  const globalVehicleTypes = {{ vehicle_types | tojson }};
+  
+  for (let i = 0; i < qty; i++) {
+    const row = document.createElement('div');
+    row.style.display = 'grid';
+    row.style.gridTemplateColumns = '1fr 1fr';
+    row.style.gap = '0.5rem';
+    row.style.border = '1px solid #e2e8f0';
+    row.style.padding = '0.8rem';
+    row.style.borderRadius = '6px';
+    row.style.background = '#f8fafc';
+    row.style.marginBottom = '0.5rem';
+    
+    // Title/Header for the vehicle item
+    const title = document.createElement('div');
+    title.style.gridColumn = '1 / -1';
+    title.style.fontWeight = 'bold';
+    title.style.fontSize = '0.9rem';
+    title.style.color = '#475569';
+    title.textContent = `Veículo / Motorista #${i + 1}`;
+    row.appendChild(title);
+    
+    // Vehicle Type Input
+    const labelVt = document.createElement('label');
+    labelVt.innerHTML = `Veículo Confirmado *<br/>`;
+    const inputVt = document.createElement('select');
+    inputVt.name = 'confirmed_vehicle_type';
+    inputVt.required = true;
+    inputVt.style.width = '100%';
+    inputVt.style.padding = '0.4rem';
+    
+    // Let's populate the vehicle types options
+    globalVehicleTypes.forEach(vt => {
+      const opt = document.createElement('option');
+      opt.value = vt.toLowerCase();
+      opt.textContent = vt;
+      if (vtDefaults[i] && vtDefaults[i] === vt.toLowerCase()) {
+        opt.selected = true;
+      } else if (!vtDefaults[i] && vt.toLowerCase() === 'sedan') {
+        opt.selected = true;
+      }
+      inputVt.appendChild(opt);
+    });
+    
+    labelVt.appendChild(inputVt);
+    row.appendChild(labelVt);
+    
+    // Driver Select
+    const labelDriver = document.createElement('label');
+    labelDriver.innerHTML = `Motorista Confirmado *<br/>`;
+    const selectDriver = document.createElement('select');
+    selectDriver.name = 'driver_id';
+    selectDriver.required = true;
+    selectDriver.style.width = '100%';
+    selectDriver.style.padding = '0.4rem';
+    
+    // Add empty option
+    const optNone = document.createElement('option');
+    optNone.value = '';
+    optNone.textContent = '-- Selecione --';
+    selectDriver.appendChild(optNone);
+    
+    driversList.forEach(d => {
+      const opt = document.createElement('option');
+      opt.value = d.id;
+      opt.textContent = `${d.name} ${d.plate ? '(' + d.plate + ')' : ''}`;
+      if (driverDefaults[i] && driverDefaults[i] == d.id) {
+        opt.selected = true;
+      }
+      selectDriver.appendChild(opt);
+    });
+    
+    labelDriver.appendChild(selectDriver);
+    row.appendChild(labelDriver);
+    
+    container.appendChild(row);
+  }
+}
+</script>

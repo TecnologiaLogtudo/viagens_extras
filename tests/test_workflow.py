@@ -111,93 +111,11 @@ def test_full_happy_path_billable(session, monkeypatch):
         ),
     )
 
-    partner = session.exec(select(User).where(User.role == UserRole.PARTNER_REQUESTER)).first()
-    code = request_otp(session, partner, req)
-    sign_acceptance(session, partner, req, code, "127.0.0.1", "pytest")
-
-    driver = session.exec(select(Driver)).first()
-    vehicle = session.exec(select(Vehicle)).first()
-    dispatch_trip(session, sup, req, driver.id, vehicle.id, datetime(2030, 1, 2, 10, 40, tzinfo=timezone.utc))
-    driver = session.get(Driver, driver.id)
-    assert driver.activity_status == DriverActivityStatus.IN_ROUTE
-    complete_trip(
-        session,
-        sup,
-        req,
-        datetime(2030, 1, 2, 10, 45, tzinfo=timezone.utc),
-        datetime(2030, 1, 2, 11, 45, tzinfo=timezone.utc),
-        None,
-    )
-
     req = session.get(type(req), req.id)
     assert req.status == RequestStatus.COMPLETED
-    driver = session.get(Driver, driver.id)
-    assert driver.activity_status == DriverActivityStatus.AVAILABLE
     billable = list_billable_requests(session, None, None)
     assert len(billable) == 1
 
-
-def test_cannot_dispatch_without_acceptance(session):
-    req = _mk_request(session)
-    sup = session.exec(select(User).where(User.role == UserRole.BASE_SUPERVISOR)).first()
-    triage_request(
-        session,
-        sup,
-        req,
-        __import__("app.models", fromlist=["TriageDecisionPayload"]).TriageDecisionPayload(
-            decision_type=DecisionType.CONFIRM,
-            approved_quantity=1,
-            confirmed_datetime=datetime(2030, 1, 2, 10, 30, tzinfo=timezone.utc),
-            confirmed_vehicle_type="sedan",
-            tariff_value=120.0,
-        ),
-    )
-    driver = session.exec(select(Driver)).first()
-    vehicle = session.exec(select(Vehicle)).first()
-
-    with pytest.raises(DomainError):
-        dispatch_trip(session, sup, req, driver.id, vehicle.id, datetime(2030, 1, 2, 10, 40, tzinfo=timezone.utc))
-
-
-def test_cannot_request_otp_without_operational_confirmation(session):
-    req = _mk_request(session)
-    partner = session.exec(select(User).where(User.role == UserRole.PARTNER_REQUESTER)).first()
-    req.status = RequestStatus.CONFIRMED
-    session.add(req)
-    session.commit()
-
-    with pytest.raises(DomainError, match="Confirmacao operacional ausente"):
-        request_otp(session, partner, req)
-
-
-def test_cannot_dispatch_absent_driver(session, monkeypatch):
-    _mock_email_delivery(monkeypatch)
-    req = _mk_request(session)
-    sup = session.exec(select(User).where(User.role == UserRole.BASE_SUPERVISOR)).first()
-    triage_request(
-        session,
-        sup,
-        req,
-        __import__("app.models", fromlist=["TriageDecisionPayload"]).TriageDecisionPayload(
-            decision_type=DecisionType.CONFIRM,
-            approved_quantity=1,
-            confirmed_datetime=datetime(2030, 1, 2, 10, 30, tzinfo=timezone.utc),
-            confirmed_vehicle_type="sedan",
-            tariff_value=120.0,
-        ),
-    )
-    partner = session.exec(select(User).where(User.role == UserRole.PARTNER_REQUESTER)).first()
-    code = request_otp(session, partner, req)
-    sign_acceptance(session, partner, req, code, "127.0.0.1", "pytest")
-
-    driver = session.exec(select(Driver)).first()
-    driver.activity_status = DriverActivityStatus.ABSENT
-    session.add(driver)
-    session.commit()
-    vehicle = session.exec(select(Vehicle)).first()
-
-    with pytest.raises(DomainError):
-        dispatch_trip(session, sup, req, driver.id, vehicle.id, datetime(2030, 1, 2, 10, 40, tzinfo=timezone.utc))
 
 
 def test_cancel_allowed_for_submitted_and_triage(session):
@@ -276,3 +194,172 @@ def test_cancel_blocked_for_other_statuses(session):
         session.commit()
         with pytest.raises(DomainError):
             cancel_request(session, partner, req)
+
+
+def test_create_request_multi_vehicle_success(session):
+    partner = session.exec(select(User).where(User.role == UserRole.PARTNER_REQUESTER)).first()
+    base = session.exec(select(Base)).first()
+    
+    payload = TravelRequestCreate(
+        base_id=base.id,
+        request_type="extra",
+        requested_datetime=datetime(2030, 1, 2, 10, 0, tzinfo=timezone.utc),
+        origin="A",
+        destination="B",
+        quantity=2,
+        vehicle_type_requested="truck, fiorino",
+        cost_center="CC",
+        reason="motivo",
+    )
+    req = create_request(session, partner, payload)
+    assert req.quantity == 2
+    assert req.vehicle_type_requested == "truck, fiorino"
+
+
+def test_create_request_multi_vehicle_mismatch(session):
+    partner = session.exec(select(User).where(User.role == UserRole.PARTNER_REQUESTER)).first()
+    base = session.exec(select(Base)).first()
+    
+    payload = TravelRequestCreate(
+        base_id=base.id,
+        request_type="extra",
+        requested_datetime=datetime(2030, 1, 2, 10, 0, tzinfo=timezone.utc),
+        origin="A",
+        destination="B",
+        quantity=2,
+        vehicle_type_requested="truck",
+        cost_center="CC",
+        reason="motivo",
+    )
+    with pytest.raises(DomainError, match="A quantidade de tipos de veículos solicitados deve ser igual"):
+        create_request(session, partner, payload)
+
+
+def test_triage_multi_vehicle_and_drivers(session):
+    base = session.exec(select(Base)).first()
+    d2 = Driver(name="D2", phone="2", base_id=base.id)
+    session.add(d2)
+    session.commit()
+    
+    partner = session.exec(select(User).where(User.role == UserRole.PARTNER_REQUESTER)).first()
+    payload = TravelRequestCreate(
+        base_id=base.id,
+        request_type="extra",
+        requested_datetime=datetime(2030, 1, 2, 10, 0, tzinfo=timezone.utc),
+        origin="A",
+        destination="B",
+        quantity=2,
+        vehicle_type_requested="truck, fiorino",
+        cost_center="CC",
+        reason="motivo",
+    )
+    req = create_request(session, partner, payload)
+    
+    sup = session.exec(select(User).where(User.role == UserRole.BASE_SUPERVISOR)).first()
+    drivers = session.exec(select(Driver).order_by(Driver.id)).all()
+    driver1_id = drivers[0].id
+    driver2_id = drivers[1].id
+    
+    with pytest.raises(DomainError, match="A quantidade de tipos de veículos confirmados deve ser igual"):
+        triage_request(
+            session,
+            sup,
+            req,
+            __import__("app.models", fromlist=["TriageDecisionPayload"]).TriageDecisionPayload(
+                decision_type=DecisionType.CONFIRM,
+                approved_quantity=2,
+                confirmed_datetime=datetime(2030, 1, 2, 10, 30, tzinfo=timezone.utc),
+                confirmed_vehicle_type="truck",
+                tariff_value=120.0,
+                driver_ids=f"{driver1_id}, {driver2_id}",
+            ),
+        )
+
+    with pytest.raises(DomainError, match="A quantidade de motoristas vinculados deve ser igual"):
+        triage_request(
+            session,
+            sup,
+            req,
+            __import__("app.models", fromlist=["TriageDecisionPayload"]).TriageDecisionPayload(
+                decision_type=DecisionType.CONFIRM,
+                approved_quantity=2,
+                confirmed_datetime=datetime(2030, 1, 2, 10, 30, tzinfo=timezone.utc),
+                confirmed_vehicle_type="truck, fiorino",
+                tariff_value=120.0,
+                driver_ids=f"{driver1_id}",
+            ),
+        )
+
+    triage_request(
+        session,
+        sup,
+        req,
+        __import__("app.models", fromlist=["TriageDecisionPayload"]).TriageDecisionPayload(
+            decision_type=DecisionType.CONFIRM,
+            approved_quantity=2,
+            confirmed_datetime=datetime(2030, 1, 2, 10, 30, tzinfo=timezone.utc),
+            confirmed_vehicle_type="truck, fiorino",
+            tariff_value=120.0,
+            driver_ids=f"{driver1_id}, {driver2_id}",
+        ),
+    )
+    
+    conf = session.exec(
+        select(__import__("app.models", fromlist=["OperationalConfirmation"]).OperationalConfirmation)
+        .where(
+            __import__("app.models", fromlist=["OperationalConfirmation"]).OperationalConfirmation.request_id == req.id
+        )
+    ).first()
+    assert conf is not None
+    assert conf.approved_quantity == 2
+    assert conf.confirmed_vehicle_type == "truck, fiorino"
+    assert conf.driver_id == driver1_id
+    assert conf.driver_ids == f"{driver1_id}, {driver2_id}"
+
+
+def test_triage_multiple_drivers_completes(session, monkeypatch):
+    _mock_email_delivery(monkeypatch)
+    base = session.exec(select(Base)).first()
+    d2 = Driver(name="D2", phone="2", base_id=base.id)
+    session.add(d2)
+    session.commit()
+    
+    partner = session.exec(select(User).where(User.role == UserRole.PARTNER_REQUESTER)).first()
+    payload = TravelRequestCreate(
+        base_id=base.id,
+        request_type="extra",
+        requested_datetime=datetime(2030, 1, 2, 10, 0, tzinfo=timezone.utc),
+        origin="A",
+        destination="B",
+        quantity=2,
+        vehicle_type_requested="truck, fiorino",
+        cost_center="CC",
+        reason="motivo",
+    )
+    req = create_request(session, partner, payload)
+    
+    sup = session.exec(select(User).where(User.role == UserRole.BASE_SUPERVISOR)).first()
+    drivers = session.exec(select(Driver).order_by(Driver.id)).all()
+    driver1 = drivers[0]
+    driver2 = drivers[1]
+    
+    triage_request(
+        session,
+        sup,
+        req,
+        __import__("app.models", fromlist=["TriageDecisionPayload"]).TriageDecisionPayload(
+            decision_type=DecisionType.CONFIRM,
+            approved_quantity=2,
+            confirmed_datetime=datetime(2030, 1, 2, 10, 30, tzinfo=timezone.utc),
+            confirmed_vehicle_type="truck, fiorino",
+            tariff_value=120.0,
+            driver_ids=f"{driver1.id}, {driver2.id}",
+        ),
+    )
+    
+    req = session.get(type(req), req.id)
+    assert req.status == RequestStatus.COMPLETED
+    billable = list_billable_requests(session, None, None)
+    assert len(billable) == 1
+
+

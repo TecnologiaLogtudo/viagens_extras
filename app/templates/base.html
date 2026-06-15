@@ -20,7 +20,7 @@
       </div>
       <div class="meta">
         <span>{{ user.full_name }}</span>
-        <span>{{ user.role.value }}</span>
+        <span>{% if user.role.value == 'partner_requester' %}{{ user.company_name }}{% else %}{{ user.role.value }}{% endif %}</span>
       </div>
     </header>
 
@@ -111,7 +111,6 @@
           queueRefresh("#manager-partners", "/empresa/gerencial/fragments/partners");
           queueRefresh("#manager-bases", "/empresa/gerencial/fragments/bases");
           queueRefresh("#manager-companies", "/empresa/gerencial/fragments/companies");
-          queueRefresh("#manager-drivers", "/empresa/gerencial/fragments/drivers");
         }
         if (role === "base_supervisor" || role === "logistics_manager") {
           queueRefresh("#operations-drivers", "/empresa/operacoes/fragments/drivers");

@@ -74,7 +74,17 @@ def ensure_user_scope(session: Session, user: User, request: TravelRequest) -> N
             )
         ).first()
         if not allowed:
-            raise DomainError("Acesso negado ao pedido de outra base.")
+            # Fallback to legacy base-only scoping if no specific company-base link exists
+            legacy_allowed = False
+            if user.base_id == request.base_id:
+                legacy_allowed = True
+            else:
+                user_base_ids = {b.id for b in user.bases if b.id is not None}
+                if request.base_id in user_base_ids:
+                    legacy_allowed = True
+            
+            if not legacy_allowed:
+                raise DomainError("Acesso negado ao pedido de outra base.")
 
 
 def supervisor_allowed_base_ids(session: Session, user: User) -> set[int]:
@@ -99,7 +109,8 @@ def supervisor_can_access_request(session: Session, user: User, request: TravelR
         return True
     if user.role != UserRole.BASE_SUPERVISOR:
         return False
-    return session.exec(
+    
+    allowed = session.exec(
         select(CompanyBase.id)
         .join(UserCompanyBaseLink, UserCompanyBaseLink.company_base_id == CompanyBase.id)
         .where(
@@ -108,6 +119,19 @@ def supervisor_can_access_request(session: Session, user: User, request: TravelR
             CompanyBase.base_id == request.base_id,
         )
     ).first() is not None
+
+    if allowed:
+        return True
+    
+    # Fallback for legacy scoping
+    if user.base_id == request.base_id:
+        return True
+    
+    user_base_ids = {b.id for b in user.bases if b.id is not None}
+    if request.base_id in user_base_ids:
+        return True
+
+    return False
 
 
 OTP_VALID_MINUTES = 5
@@ -259,6 +283,10 @@ def create_request(session: Session, user: User, payload: TravelRequestCreate) -
     if not base:
         raise DomainError("Base inválida.")
 
+    req_vts = [v.strip() for v in payload.vehicle_type_requested.split(",") if v.strip()]
+    if len(req_vts) != payload.quantity:
+        raise DomainError("A quantidade de tipos de veículos solicitados deve ser igual à quantidade total de veículos.")
+
     allowed = session.exec(
         select(CompanyBase).where(
             and_(CompanyBase.company_id == user.company_id, CompanyBase.base_id == payload.base_id)
@@ -347,7 +375,7 @@ def triage_request(session: Session, user: User, request: TravelRequest, payload
         raise DomainError("Perfil sem permissão para triagem.")
     ensure_user_scope(session, user, request)
 
-    if request.status not in (RequestStatus.SUBMITTED, RequestStatus.TRIAGE, RequestStatus.CONFIRMED):
+    if request.status not in (RequestStatus.SUBMITTED, RequestStatus.TRIAGE, RequestStatus.CONFIRMED, RequestStatus.COMPLETED):
         raise DomainError("Pedido fora de status para triagem ou edição.")
 
     request.status = RequestStatus.TRIAGE
@@ -359,7 +387,36 @@ def triage_request(session: Session, user: User, request: TravelRequest, payload
         request.status = RequestStatus.REFUSED
         log_event(session, request.id, user.id, "request_refused", payload.refusal_reason)
     else:
-        request.status = RequestStatus.CONFIRMED
+        # Validate confirmed vehicle types
+        vts = [v.strip() for v in payload.confirmed_vehicle_type.split(",") if v.strip()]
+        if len(vts) != payload.approved_quantity:
+            raise DomainError("A quantidade de tipos de veículos confirmados deve ser igual à quantidade aprovada.")
+
+        # Validate driver_ids
+        driver_ids_list = []
+        if payload.driver_ids:
+            driver_ids_list = [d.strip() for d in payload.driver_ids.split(",") if d.strip()]
+        elif payload.driver_id:
+            driver_ids_list = [str(payload.driver_id)]
+            payload.driver_ids = str(payload.driver_id)
+        
+        first_driver_id = None
+        if driver_ids_list:
+            if len(driver_ids_list) != payload.approved_quantity:
+                raise DomainError("A quantidade de motoristas vinculados deve ser igual à quantidade aprovada.")
+                
+            for d_id_str in driver_ids_list:
+                if not d_id_str.isdigit():
+                    raise DomainError(f"ID do motorista inválido: {d_id_str}")
+                d_id = int(d_id_str)
+                d = session.get(Driver, d_id)
+                if not d:
+                    raise DomainError(f"Motorista com ID {d_id} não encontrado.")
+                if d.base_id != request.base_id:
+                    raise DomainError(f"Motorista {d.name} não pertence à base do pedido.")
+            first_driver_id = int(driver_ids_list[0])
+
+        request.status = RequestStatus.COMPLETED
         
         # Check for existing confirmation to update it
         existing_conf = session.exec(
@@ -374,6 +431,8 @@ def triage_request(session: Session, user: User, request: TravelRequest, payload
             existing_conf.confirmed_vehicle_type = payload.confirmed_vehicle_type
             existing_conf.tariff_value = payload.tariff_value
             existing_conf.observations = payload.observations
+            existing_conf.driver_id = first_driver_id
+            existing_conf.driver_ids = payload.driver_ids
             session.add(existing_conf)
         else:
             session.add(
@@ -386,6 +445,8 @@ def triage_request(session: Session, user: User, request: TravelRequest, payload
                     confirmed_vehicle_type=payload.confirmed_vehicle_type,
                     tariff_value=payload.tariff_value,
                     observations=payload.observations,
+                    driver_id=first_driver_id,
+                    driver_ids=payload.driver_ids,
                 )
             )
         
@@ -397,13 +458,16 @@ def triage_request(session: Session, user: User, request: TravelRequest, payload
                 session,
                 NotificationType.REQUEST_CONFIRMED,
                 requester.email,
-                f"Pedido {request.protocol} confirmado",
-                "A operação confirmou o pedido. Faça o aceite no portal.",
+                f"Pedido {request.protocol} concluído",
+                "A operação confirmou e concluiu o pedido. O comprovante está disponível no portal.",
                 request_id=request.id,
                 user_id=requester.id,
             )
 
     session.add(request)
+    if payload.decision_type != DecisionType.REFUSE:
+        session.flush()
+        generate_pdf_document(session, request)
     session.commit()
 
 
@@ -414,6 +478,10 @@ def propose_change(session: Session, user: User, request: TravelRequest, payload
 
     if request.status not in (RequestStatus.SUBMITTED, RequestStatus.TRIAGE, RequestStatus.CONFIRMED):
         raise DomainError("Status atual não permite alteração.")
+
+    req_vts = [v.strip() for v in payload.vehicle_type_requested.split(",") if v.strip()]
+    if len(req_vts) != payload.quantity:
+        raise DomainError("A quantidade de tipos de veículos solicitados deve ser igual à quantidade total de veículos.")
 
     # Update request details
     request.quantity = payload.quantity
@@ -506,7 +574,7 @@ def sign_acceptance(session: Session, user: User, request: TravelRequest, code: 
 def can_partner_cancel_request(session: Session, request: TravelRequest) -> bool:
     if request.status in (RequestStatus.SUBMITTED, RequestStatus.TRIAGE):
         return True
-    if request.status != RequestStatus.CONFIRMED:
+    if request.status not in (RequestStatus.CONFIRMED, RequestStatus.COMPLETED):
         return False
 
     confirmation = _get_operational_confirmation(session, request.id)
@@ -524,7 +592,7 @@ def cancel_request(session: Session, user: User, request: TravelRequest, reason:
 
     if request.status in (RequestStatus.SUBMITTED, RequestStatus.TRIAGE):
         pass
-    elif request.status == RequestStatus.CONFIRMED:
+    elif request.status in (RequestStatus.CONFIRMED, RequestStatus.COMPLETED):
         confirmation = _get_operational_confirmation(session, request.id)
         if not confirmation:
             raise DomainError("Confirmacao operacional ausente. Reabra a triagem do pedido.")
@@ -577,6 +645,21 @@ def dispatch_trip(session: Session, user: User, request: TravelRequest, driver_i
     session.add(dispatch)
     session.add(request)
     session.add(driver)
+
+    # Set all other pre-selected drivers to IN_ROUTE
+    conf = session.exec(
+        select(OperationalConfirmation).where(OperationalConfirmation.request_id == request.id)
+    ).first()
+    if conf and conf.driver_ids:
+        driver_ids_list = [int(d.strip()) for d in conf.driver_ids.split(",") if d.strip().isdigit()]
+        for d_id in driver_ids_list:
+            if d_id != driver_id:
+                other_driver = session.get(Driver, d_id)
+                if other_driver:
+                    other_driver.activity_status = DriverActivityStatus.IN_ROUTE
+                    other_driver.status_updated_at = now_utc()
+                    session.add(other_driver)
+
     log_event(session, request.id, user.id, "trip_dispatched", f"driver={driver_id}|vehicle={vehicle_id}")
     session.commit()
     session.refresh(dispatch)
@@ -584,6 +667,15 @@ def dispatch_trip(session: Session, user: User, request: TravelRequest, driver_i
 
 
 def generate_pdf_document(session: Session, request: TravelRequest) -> Document:
+    """Generate a highly polished, professional PDF receipt for a completed trip.
+
+    Replicates the format and content of the Agendamento.docx template.
+    """
+    from reportlab.lib.colors import HexColor
+    from reportlab.platypus import Table, TableStyle, Paragraph
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    import re
+
     base_dir = Path(__file__).resolve().parent.parent.parent
     docs_dir = base_dir / "app" / "data" / "documents"
     docs_dir.mkdir(parents=True, exist_ok=True)
@@ -592,24 +684,181 @@ def generate_pdf_document(session: Session, request: TravelRequest) -> Document:
     buffer = io.BytesIO()
     pdf = canvas.Canvas(buffer, pagesize=A4)
     pdf.setTitle(f"Comprovante {request.protocol}")
-    pdf.drawString(50, 800, "Central de Viagens Extras - Comprovante")
-    pdf.drawString(50, 780, f"Protocolo: {request.protocol}")
-    pdf.drawString(50, 760, f"Status: {request.status.value}")
 
-    events = session.exec(select(EventLog).where(EventLog.request_id == request.id).order_by(EventLog.created_at)).all()
-    y = 730
-    for event in events[:20]:
-        pdf.drawString(50, y, f"{event.created_at.isoformat()} - {event.event_type} - {event.payload[:90]}")
-        y -= 16
-        if y < 70:
-            pdf.showPage()
-            y = 800
+    # --- Header Texts ---
+    pdf.setFont("Helvetica-Bold", 20)
+    pdf.setFillColor(HexColor("#0f172a"))
+    pdf.drawString(50, 775, "Agendamento de Veículos")
+
+    pdf.setFont("Helvetica", 10)
+    pdf.setFillColor(HexColor("#475569"))
+    pdf.drawString(50, 760, "Logtudo soluções logísticas")
+
+    pdf.setFont("Helvetica-Bold", 14)
+    pdf.setFillColor(HexColor("#0f172a"))
+    pdf.drawCentredString(297.6, 725, "Comprovante de Agendamento de Transporte")
+
+    # Thin decorative line below header
+    pdf.setStrokeColor(HexColor("#cbd5e1"))
+    pdf.setLineWidth(1)
+    pdf.line(50, 745, 545, 745)
+
+    # Draw logo on the right side if it exists
+    logo_path = base_dir / "app" / "static" / "imagens" / "LogoPrincipal.png"
+    if logo_path.exists():
+        pdf.drawImage(str(logo_path), 505, 755, width=40, height=40, mask='auto', preserveAspectRatio=True)
+
+    # --- Data Retrieval ---
+    # Supplier
+    company = session.get(Company, request.company_id)
+    
+    # Base
+    base = session.get(Base, request.base_id)
+    
+    # Operational Confirmation
+    conf = session.exec(select(OperationalConfirmation).where(OperationalConfirmation.request_id == request.id)).first()
+    
+    # Acceptance & Signer (fallback for legacy requests)
+    acceptance = session.exec(select(Acceptance).where(Acceptance.request_id == request.id)).first()
+    if acceptance:
+        signer = session.get(User, acceptance.user_id)
+        approval_date_str = acceptance.accepted_at.strftime("%d/%m/%Y %H:%M")
+        approval_method = "OTP (One-Time Password)"
+    elif conf:
+        signer = session.get(User, conf.supervisor_user_id)
+        approval_date_str = conf.created_at.strftime("%d/%m/%Y %H:%M") if conf.created_at else "N/A"
+        approval_method = "Confirmação do Supervisor"
+    else:
+        signer = None
+        approval_date_str = "N/A"
+        approval_method = "Confirmação do Supervisor"
+
+    # OTP Code extraction
+    otp_code = "N/A"
+    notification = session.exec(
+        select(Notification)
+        .where(
+            Notification.request_id == request.id,
+            Notification.type == NotificationType.OTP_SENT
+        )
+        .order_by(Notification.sent_at.desc())
+    ).first()
+    if notification:
+        match = re.search(r"codigo OTP e:\s*(\d+)", notification.body)
+        if match:
+            otp_code = match.group(1)
+
+    # --- Styles ---
+    styles = getSampleStyleSheet()
+    
+    normal_style = ParagraphStyle(
+        'ValStyle',
+        parent=styles['Normal'],
+        fontName='Helvetica',
+        fontSize=9,
+        leading=11,
+        textColor=HexColor("#0f172a")
+    )
+    
+    bold_style = ParagraphStyle(
+        'LabelStyle',
+        parent=styles['Normal'],
+        fontName='Helvetica-Bold',
+        fontSize=9,
+        leading=11,
+        textColor=HexColor("#334155")
+    )
+    
+    header_style = ParagraphStyle(
+        'HeaderStyle',
+        parent=styles['Normal'],
+        fontName='Helvetica-Bold',
+        fontSize=10,
+        leading=12,
+        textColor=HexColor("#0f172a")
+    )
+
+    # --- Table Data ---
+    data = [
+        [Paragraph("1. Dados do Fornecedor (Solicitante)", header_style), ""],
+        [Paragraph("CNPJ do Fornecedor:", bold_style), Paragraph(company.cnpj if company else "N/A", normal_style)],
+        [Paragraph("Nome do Fornecedor:", bold_style), Paragraph(company.name if company else "N/A", normal_style)],
+        
+        [Paragraph("2. Dados da Solicitação", header_style), ""],
+        [Paragraph("Data de Agendamento:", bold_style), Paragraph(request.requested_datetime.strftime("%d/%m/%Y") if request.requested_datetime else "N/A", normal_style)],
+        [Paragraph("Horário:", bold_style), Paragraph(request.requested_datetime.strftime("%H:%M") if request.requested_datetime else "N/A", normal_style)],
+        [Paragraph("Base:", bold_style), Paragraph(f"{base.name} - {base.location}" if base else "N/A", normal_style)],
+        [Paragraph("Tipo de pedido:", bold_style), Paragraph("Viagem extra", normal_style)],
+        [Paragraph("Nº do Pedido:", bold_style), Paragraph(request.protocol, normal_style)],
+        [Paragraph("Qtd. Veículos:", bold_style), Paragraph(str(request.quantity), normal_style)],
+        [Paragraph("Tipo de Veículos:", bold_style), Paragraph(request.vehicle_type_requested, normal_style)],
+        [Paragraph("Origem:", bold_style), Paragraph(request.origin, normal_style)],
+        [Paragraph("Destino:", bold_style), Paragraph(request.destination, normal_style)],
+        
+        [Paragraph("3. Aprovação", header_style), ""],
+        [Paragraph("Método de Aprovação:", bold_style), Paragraph(approval_method, normal_style)],
+        [Paragraph("Status:", bold_style), Paragraph("Aprovado" if request.status in (RequestStatus.CONFIRMED, RequestStatus.ACCEPTED, RequestStatus.COMPLETED) else str(request.status.value), normal_style)],
+        [Paragraph("Data de Aprovação:", bold_style), Paragraph(approval_date_str, normal_style)],
+    ]
+    if acceptance or otp_code != "N/A":
+        data.append([Paragraph("Código OTP Utilizado:", bold_style), Paragraph(otp_code, normal_style)])
+        
+    data.extend([
+        [Paragraph("Aprovado por:", bold_style), Paragraph(signer.full_name if signer else "N/A", normal_style)],
+        [Paragraph("Observações:", bold_style), Paragraph(conf.observations if (conf and conf.observations) else "", normal_style)],
+    ])
+
+    col_widths = [160, 335]  # Total width 495
+    t = Table(data, colWidths=col_widths)
+
+    t_style = TableStyle([
+        # Headers styling
+        ('SPAN', (0, 0), (1, 0)),
+        ('BACKGROUND', (0, 0), (1, 0), HexColor("#f8fafc")),
+        ('BOTTOMPADDING', (0, 0), (1, 0), 6),
+        ('TOPPADDING', (0, 0), (1, 0), 6),
+        
+        ('SPAN', (0, 3), (1, 3)),
+        ('BACKGROUND', (0, 3), (1, 3), HexColor("#f8fafc")),
+        ('BOTTOMPADDING', (0, 3), (1, 3), 6),
+        ('TOPPADDING', (0, 3), (1, 3), 6),
+        
+        ('SPAN', (0, 13), (1, 13)),
+        ('BACKGROUND', (0, 13), (1, 13), HexColor("#f8fafc")),
+        ('BOTTOMPADDING', (0, 13), (1, 13), 6),
+        ('TOPPADDING', (0, 13), (1, 13), 6),
+        
+        # General layout
+        ('GRID', (0, 0), (-1, -1), 0.5, HexColor("#cbd5e1")),
+        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+        ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+        
+        # Padding
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 5),
+        ('TOPPADDING', (0, 0), (-1, -1), 5),
+        ('LEFTPADDING', (0, 0), (-1, -1), 8),
+        ('RIGHTPADDING', (0, 0), (-1, -1), 8),
+    ])
+    t.setStyle(t_style)
+
+    # Wrap table to calculate height
+    width, height = t.wrap(495, 600)
+    
+    # Draw table so that its top is at y = 700
+    table_y = 700 - height
+    t.drawOn(pdf, 50, table_y)
+
+    # --- Footer ---
+    pdf.setFont("Helvetica-Oblique", 8)
+    pdf.setFillColor(HexColor("#475569"))
+    footer_text = "Este documento é um comprovante oficial de agendamento. Qualquer alteração deve ser comunicada com antecedência mínima de 24 horas."
+    pdf.drawCentredString(297.6, 60, footer_text)
 
     pdf.save()
-    data = buffer.getvalue()
-    file_path.write_bytes(data)
+    data_bytes = buffer.getvalue()
+    file_path.write_bytes(data_bytes)
 
-    digest = hashlib.sha256(data).hexdigest()
+    digest = hashlib.sha256(data_bytes).hexdigest()
     existing = session.exec(select(Document).where(Document.request_id == request.id)).first()
     if existing:
         existing.file_path = str(file_path)
@@ -657,6 +906,21 @@ def complete_trip(
     session.add(request)
     if driver:
         session.add(driver)
+
+    # Set all other pre-selected drivers to AVAILABLE
+    conf = session.exec(
+        select(OperationalConfirmation).where(OperationalConfirmation.request_id == request.id)
+    ).first()
+    if conf and conf.driver_ids:
+        driver_ids_list = [int(d.strip()) for d in conf.driver_ids.split(",") if d.strip().isdigit()]
+        for d_id in driver_ids_list:
+            if d_id != dispatch.driver_id:
+                other_driver = session.get(Driver, d_id)
+                if other_driver:
+                    other_driver.activity_status = DriverActivityStatus.AVAILABLE
+                    other_driver.status_updated_at = now_utc()
+                    session.add(other_driver)
+
     log_event(session, request.id, user.id, "trip_completed", f"arrival={actual_arrival_at.isoformat()}")
 
     document = generate_pdf_document(session, request)
@@ -678,19 +942,15 @@ def complete_trip(
 
 
 def list_billable_requests(session: Session, company_id: Optional[int], base_id: Optional[int]):
-    stmt = select(TravelRequest).where(TravelRequest.status == RequestStatus.COMPLETED)
+    stmt = select(TravelRequest).where(
+        TravelRequest.status.in_([RequestStatus.CONFIRMED, RequestStatus.ACCEPTED, RequestStatus.IN_EXECUTION, RequestStatus.COMPLETED])
+    )
     if company_id:
         stmt = stmt.where(TravelRequest.company_id == company_id)
     if base_id:
         stmt = stmt.where(TravelRequest.base_id == base_id)
 
-    requests = session.exec(stmt).all()
-    valid = []
-    for req in requests:
-        acceptance = session.exec(select(Acceptance).where(Acceptance.request_id == req.id)).first()
-        if acceptance:
-            valid.append(req)
-    return valid
+    return session.exec(stmt).all()
 
 
 def billing_csv(session: Session, company_id: Optional[int], base_id: Optional[int]) -> str:
