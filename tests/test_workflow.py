@@ -60,7 +60,7 @@ def _mk_request(session):
     base = session.exec(select(Base)).first()
     payload = TravelRequestCreate(
         base_id=base.id,
-        request_type="extra",
+        request_type="Viagem extra NILO",
         requested_datetime=datetime(2030, 1, 2, 10, 0, tzinfo=timezone.utc),
         origin="A",
         destination="B",

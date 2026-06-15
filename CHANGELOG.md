@@ -5,6 +5,8 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased] - 2026-06-15
 
 ### Changed
+- **Lista Suspensa para Tipo de Viagem:**
+  - O campo de texto livre para Tipo de Viagem no formulário do Parceiro (tanto no portal do parceiro quanto no dashboard) foi substituído por uma lista suspensa (select) com as opções: "Viagem extra NILO", "Carro dedicado", "Carro extra rota D2D" e "Cotação de preço".
 - **Simplificação do Fluxo de Viagens Extras:**
   - Remoção completa da etapa de validação via código OTP pelo Parceiro.
   - Remoção completa da etapa de Despacho (dispatch) e Conclusão (complete) manual do Supervisor.
