@@ -144,24 +144,22 @@ def test_full_happy_path_billable(session, monkeypatch):
 
 def test_cancel_allowed_for_submitted_and_triage(session):
     req = _mk_request(session)
-    partner = session.exec(select(User).where(User.role == UserRole.PARTNER_REQUESTER)).first()
-    canceled = cancel_request(session, partner, req, reason="mudanca")
+    sup = session.exec(select(User).where(User.role == UserRole.BASE_SUPERVISOR)).first()
+    canceled = cancel_request(session, sup, req, reason="mudanca")
     assert canceled.status == RequestStatus.CANCELED
 
     req2 = _mk_request(session)
-    sup = session.exec(select(User).where(User.role == UserRole.BASE_SUPERVISOR)).first()
     req2.status = RequestStatus.TRIAGE
     session.add(req2)
     session.commit()
-    canceled2 = cancel_request(session, partner, req2)
+    canceled2 = cancel_request(session, sup, req2)
     assert canceled2.status == RequestStatus.CANCELED
 
 
-def test_cancel_allowed_for_confirmed_with_24h_window(session, monkeypatch):
+def test_cancel_allowed_for_confirmed_by_supervisor(session, monkeypatch):
     _mock_email_delivery(monkeypatch)
     req = _mk_request(session)
     sup = session.exec(select(User).where(User.role == UserRole.BASE_SUPERVISOR)).first()
-    partner = session.exec(select(User).where(User.role == UserRole.PARTNER_REQUESTER)).first()
     triage_request(
         session,
         sup,
@@ -175,49 +173,31 @@ def test_cancel_allowed_for_confirmed_with_24h_window(session, monkeypatch):
         ),
     )
     req = session.get(type(req), req.id)
-    assert can_partner_cancel_request(session, req) is True
-    canceled = cancel_request(session, partner, req)
+    assert can_partner_cancel_request(session, req) is False
+    canceled = cancel_request(session, sup, req)
     assert canceled.status == RequestStatus.CANCELED
 
 
-def test_cancel_blocked_after_confirmed_window(session, monkeypatch):
-    _mock_email_delivery(monkeypatch)
+def test_partner_cancel_always_blocked(session):
     req = _mk_request(session)
-    sup = session.exec(select(User).where(User.role == UserRole.BASE_SUPERVISOR)).first()
     partner = session.exec(select(User).where(User.role == UserRole.PARTNER_REQUESTER)).first()
-    triage_request(
-        session,
-        sup,
-        req,
-        __import__("app.models", fromlist=["TriageDecisionPayload"]).TriageDecisionPayload(
-            decision_type=DecisionType.CONFIRM,
-            approved_quantity=1,
-            confirmed_datetime=datetime(2020, 1, 2, 10, 30, tzinfo=timezone.utc),
-            confirmed_vehicle_type="sedan",
-            tariff_value=120.0,
-        ),
-    )
-    req = session.get(type(req), req.id)
     assert can_partner_cancel_request(session, req) is False
-    with pytest.raises(DomainError, match="Prazo contratual de 24h"):
+    with pytest.raises(DomainError, match="Somente a equipe Logtudo pode cancelar solicitações"):
         cancel_request(session, partner, req)
 
 
-def test_cancel_blocked_for_other_statuses(session):
+def test_supervisor_cancel_allowed_for_active_statuses(session):
     req = _mk_request(session)
-    partner = session.exec(select(User).where(User.role == UserRole.PARTNER_REQUESTER)).first()
+    sup = session.exec(select(User).where(User.role == UserRole.BASE_SUPERVISOR)).first()
     for status in (
         RequestStatus.ACCEPTED,
         RequestStatus.IN_EXECUTION,
-        RequestStatus.COMPLETED,
-        RequestStatus.REFUSED,
-        RequestStatus.CANCELED,
     ):
         req.status = status
         session.add(req)
         session.commit()
-        with pytest.raises(DomainError):
-            cancel_request(session, partner, req)
+        canceled = cancel_request(session, sup, req)
+        assert canceled.status == RequestStatus.CANCELED
 
 
 def test_create_request_multi_vehicle_success(session):
@@ -385,5 +365,51 @@ def test_triage_multiple_drivers_completes(session, monkeypatch):
     assert req.status == RequestStatus.COMPLETED
     billable = list_billable_requests(session, None, None)
     assert len(billable) == 1
+
+
+def test_quote_triage_flow(session, monkeypatch):
+    _mock_email_delivery(monkeypatch)
+    req = _mk_request(session)
+    req.request_type = "Cotação de preço"
+    session.add(req)
+    session.commit()
+
+    sup = session.exec(select(User).where(User.role == UserRole.BASE_SUPERVISOR)).first()
+    
+    # Triage with 0 tariff must fail
+    with pytest.raises(DomainError, match="O valor da tarifa é obrigatório para cotação de preço."):
+        triage_request(
+            session,
+            sup,
+            req,
+            __import__("app.models", fromlist=["TriageDecisionPayload"]).TriageDecisionPayload(
+                decision_type=DecisionType.CONFIRM,
+                approved_quantity=1,
+                confirmed_datetime=datetime(2030, 1, 2, 10, 30, tzinfo=timezone.utc),
+                confirmed_vehicle_type="sedan",
+                tariff_value=0.0,
+            ),
+        )
+
+    # Triage with correct tariff must succeed and transition to CONFIRMED without PDF
+    triage_request(
+        session,
+        sup,
+        req,
+        __import__("app.models", fromlist=["TriageDecisionPayload"]).TriageDecisionPayload(
+            decision_type=DecisionType.CONFIRM,
+            approved_quantity=1,
+            confirmed_datetime=datetime(2030, 1, 2, 10, 30, tzinfo=timezone.utc),
+            confirmed_vehicle_type="sedan",
+            tariff_value=150.0,
+        ),
+    )
+    req = session.get(type(req), req.id)
+    assert req.status == RequestStatus.CONFIRMED
+    # Verify no PDF document is generated yet
+    from app.models import Document
+    doc = session.exec(select(Document).where(Document.request_id == req.id)).first()
+    assert doc is None
+
 
 

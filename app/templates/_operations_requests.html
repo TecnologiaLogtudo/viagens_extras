@@ -18,11 +18,17 @@
         <td>
           <button hx-get="/empresa/requests/{{ req.id }}/supervisor-panel" hx-target="#supervisor-panel" hx-swap="outerHTML" type="button">Abrir painel</button>
 
-          {% if req.status.value in ['confirmed', 'accepted', 'in_execution', 'completed'] %}
+          {% if req.status.value in ['accepted', 'in_execution', 'completed'] or (req.status.value == 'confirmed' and req.request_type != 'Cotação de preço') %}
           <a href="/requests/{{ req.id }}/comprovante" class="button-like download-btn" target="_blank" style="background: var(--success, #2ec4b6); color: white; padding: 0.4rem 0.6rem; text-decoration: none; border-radius: 4px; font-size: 0.85rem; display: inline-flex; align-items: center; gap: 0.3rem; margin-left: 0.4rem;">
             <svg style="width: 14px; height: 14px; fill: currentColor;" viewBox="0 0 24 24"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></svg>
             Comprovante
           </a>
+          {% endif %}
+
+          {% if req.status.value != 'canceled' %}
+          <form method="post" action="/empresa/requests/{{ req.id }}/cancel" style="display: inline; margin-left: 0.4rem;" onsubmit="return confirm('Deseja realmente cancelar esta solicitação?');">
+            <button type="submit" class="button-like" style="background: var(--danger, #e63946); color: white; border: none; padding: 0.4rem 0.6rem; border-radius: 4px; font-size: 0.85rem; cursor: pointer;">Cancelar</button>
+          </form>
           {% endif %}
 
           {% if req.status.value in ['submitted','triage','completed'] %}
@@ -67,9 +73,13 @@
                 ];
                 updateConfirmedVehiclesAndDrivers({{ req.id }}, '{{ conf.confirmed_vehicle_type if conf else req.vehicle_type_requested }}', '{{ conf.driver_ids if conf and conf.driver_ids else (conf.driver_id if conf and conf.driver_id else "") }}');
               </script>
+              {% if req.request_type == 'Cotação de preço' %}
               <label>Valor Tarifa (R$)
                 <input type="number" step="0.01" name="tariff_value" value="{{ conf.tariff_value if conf else '0.00' }}" required />
               </label>
+              {% else %}
+              <input type="hidden" name="tariff_value" value="0.00" />
+              {% endif %}
               <label>Observações
                 <input name="observations" value="{{ conf.observations if conf else '' }}" placeholder="observações para o parceiro" />
               </label>

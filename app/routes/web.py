@@ -52,6 +52,8 @@ from app.services.workflow import (
     cancel_request,
     DomainError,
     ensure_aware,
+    ensure_user_scope,
+    log_event,
     billing_csv,
     complete_trip,
     compute_sla,
@@ -2100,14 +2102,72 @@ def cancel_partner_request(
     session: Session = Depends(get_session),
     user: User = Depends(partner_only),
 ):
+    raise HTTPException(status_code=403, detail="Parceiros não podem cancelar solicitações de viagem.")
+
+
+@router.post("/empresa/requests/{request_id}/cancel")
+def cancel_empresa_request(
+    request_id: int,
+    reason: str = Form(default=""),
+    session: Session = Depends(get_session),
+    user: User = Depends(supervisor_or_manager),
+):
     req = session.get(TravelRequest, request_id)
     if not req:
         raise HTTPException(404, "Pedido não encontrado")
     try:
         cancel_request(session, user, req, reason=reason or None)
     except DomainError as exc:
-        return _redirect(f"/partner?message={quote_plus(str(exc))}")
-    return _redirect("/partner?message=Pedido+cancelado+com+sucesso.")
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return _redirect("/empresa/operacoes?message=Pedido+cancelado+com+sucesso.")
+
+
+@router.post("/partner/requests/{request_id}/accept-quote")
+def accept_partner_quote(
+    request_id: int,
+    session: Session = Depends(get_session),
+    user: User = Depends(partner_only),
+):
+    req = session.get(TravelRequest, request_id)
+    if not req:
+        raise HTTPException(404, "Pedido não encontrado")
+    ensure_user_scope(session, user, req)
+    if req.status != RequestStatus.CONFIRMED or req.request_type != "Cotação de preço":
+        raise HTTPException(status_code=400, detail="Esta solicitação não é uma cotação pendente de aceite.")
+    
+    req.status = RequestStatus.COMPLETED
+    req.updated_at = now_utc()
+    session.add(req)
+    
+    log_event(session, req.id, user.id, "acceptance_signed", "Partner accepted quote.")
+    session.flush()
+    generate_pdf_document(session, req)
+    session.commit()
+    
+    return _redirect("/partner?message=Cotação+aceita+com+sucesso.")
+
+
+@router.post("/partner/requests/{request_id}/decline-quote")
+def decline_partner_quote(
+    request_id: int,
+    session: Session = Depends(get_session),
+    user: User = Depends(partner_only),
+):
+    req = session.get(TravelRequest, request_id)
+    if not req:
+        raise HTTPException(404, "Pedido não encontrado")
+    ensure_user_scope(session, user, req)
+    if req.status != RequestStatus.CONFIRMED or req.request_type != "Cotação de preço":
+        raise HTTPException(status_code=400, detail="Esta solicitação não é uma cotação pendente de aceite.")
+    
+    req.status = RequestStatus.REFUSED
+    req.updated_at = now_utc()
+    session.add(req)
+    
+    log_event(session, req.id, user.id, "request_refused", "Partner declined quote.")
+    session.commit()
+    
+    return _redirect("/partner?message=Cotação+recusada+com+sucesso.")
 
 
 @router.post("/partner/requests/{request_id}/propose-change")

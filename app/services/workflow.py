@@ -421,7 +421,12 @@ def triage_request(session: Session, user: User, request: TravelRequest, payload
                     raise DomainError(f"Motorista {d.name} não pertence à base do pedido.")
             first_driver_id = int(driver_ids_list[0])
 
-        request.status = RequestStatus.COMPLETED
+        if request.request_type == "Cotação de preço":
+            if payload.tariff_value is None or payload.tariff_value <= 0.0:
+                raise DomainError("O valor da tarifa é obrigatório para cotação de preço.")
+            request.status = RequestStatus.CONFIRMED
+        else:
+            request.status = RequestStatus.COMPLETED
         
         # Check for existing confirmation to update it
         existing_conf = session.exec(
@@ -459,18 +464,29 @@ def triage_request(session: Session, user: User, request: TravelRequest, payload
 
         requester = session.get(User, request.requested_by_user_id)
         if requester:
-            send_email_notification(
-                session,
-                NotificationType.REQUEST_CONFIRMED,
-                requester.email,
-                f"Pedido {request.protocol} concluído",
-                "A operação confirmou e concluiu o pedido. O comprovante está disponível no portal.",
-                request_id=request.id,
-                user_id=requester.id,
-            )
+            if request.status == RequestStatus.CONFIRMED:
+                send_email_notification(
+                    session,
+                    NotificationType.REQUEST_CONFIRMED,
+                    requester.email,
+                    f"Cotação enviada para o pedido {request.protocol}",
+                    "A operação enviou uma cotação para o seu pedido. Acesse o portal para aceitar ou declinar.",
+                    request_id=request.id,
+                    user_id=requester.id,
+                )
+            else:
+                send_email_notification(
+                    session,
+                    NotificationType.REQUEST_CONFIRMED,
+                    requester.email,
+                    f"Pedido {request.protocol} concluído",
+                    "A operação confirmou e concluiu o pedido. O comprovante está disponível no portal.",
+                    request_id=request.id,
+                    user_id=requester.id,
+                )
 
     session.add(request)
-    if payload.decision_type != DecisionType.REFUSE:
+    if payload.decision_type != DecisionType.REFUSE and request.status == RequestStatus.COMPLETED:
         session.flush()
         generate_pdf_document(session, request)
     session.commit()
@@ -577,37 +593,17 @@ def sign_acceptance(session: Session, user: User, request: TravelRequest, code: 
 
 
 def can_partner_cancel_request(session: Session, request: TravelRequest) -> bool:
-    if request.status in (RequestStatus.SUBMITTED, RequestStatus.TRIAGE):
-        return True
-    if request.status not in (RequestStatus.CONFIRMED, RequestStatus.COMPLETED):
-        return False
-
-    confirmation = _get_operational_confirmation(session, request.id)
-    if not confirmation:
-        return False
-
-    cancel_deadline = ensure_aware(confirmation.confirmed_datetime) - timedelta(hours=24)
-    return now_utc() <= cancel_deadline
+    # Apenas Logtudo pode cancelar viagens
+    return False
 
 
 def cancel_request(session: Session, user: User, request: TravelRequest, reason: str | None = None) -> TravelRequest:
-    if user.role != UserRole.PARTNER_REQUESTER:
-        raise DomainError("Somente parceiro pode cancelar.")
+    if user.role not in (UserRole.BASE_SUPERVISOR, UserRole.LOGISTICS_MANAGER):
+        raise DomainError("Somente a equipe Logtudo pode cancelar solicitações.")
     ensure_user_scope(session, user, request)
 
-    if request.status in (RequestStatus.SUBMITTED, RequestStatus.TRIAGE):
-        pass
-    elif request.status in (RequestStatus.CONFIRMED, RequestStatus.COMPLETED):
-        confirmation = _get_operational_confirmation(session, request.id)
-        if not confirmation:
-            raise DomainError("Confirmacao operacional ausente. Reabra a triagem do pedido.")
-        cancel_deadline = ensure_aware(confirmation.confirmed_datetime) - timedelta(hours=24)
-        if now_utc() > cancel_deadline:
-            raise DomainError("Cancelamento indisponivel. Prazo contratual de 24h antes da viagem confirmado foi excedido.")
-    elif request.status == RequestStatus.CANCELED:
-        raise DomainError("Pedido ja cancelado.")
-    else:
-        raise DomainError("Cancelamento indisponivel para o status atual.")
+    if request.status == RequestStatus.CANCELED:
+        raise DomainError("Pedido já cancelado.")
 
     request.status = RequestStatus.CANCELED
     request.updated_at = now_utc()

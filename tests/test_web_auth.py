@@ -5,7 +5,7 @@ from sqlmodel import Session, select
 
 from app.db import engine
 from app.main import app
-from app.models import Base, Company, CompanyBase, DecisionType, Driver, EventLog, OperationalConfirmation, RequestStatus, UserBaseLink, UserCompanyBaseLink, TravelRequest, User, Vehicle
+from app.models import Base, Company, CompanyBase, DecisionType, Document, Driver, EventLog, OperationalConfirmation, RequestStatus, UserBaseLink, UserCompanyBaseLink, TravelRequest, User, Vehicle
 from app.routes.web import _event_matches_user, _resolve_company_from_base_ids
 from app.services.workflow import DomainError
 
@@ -171,11 +171,12 @@ def test_status_labels_by_profile_and_partner_cancel_action(client: TestClient):
     login(client, "parceiro@logtudo.local", "parceiro123")
     partner_page = client.get("/partner")
     assert "Aprovação pendente de aceite" in partner_page.text
-    assert "Cancelar pedido" in partner_page.text
+    assert "Cancelar pedido" not in partner_page.text
 
     login(client, "supervisor@logtudo.local", "supervisor123")
     supervisor_page = client.get("/empresa/operacoes")
     assert "Confirmado" in supervisor_page.text
+    assert "Cancelar" in supervisor_page.text
 
 
 def test_manager_register_partner_with_new_company_and_multiple_bases(client: TestClient):
@@ -961,3 +962,164 @@ def test_supervisor_panel_driver_filtering(client: TestClient):
     assert "Driver Van Test" in resp.text
     assert "Driver No Vehicle Test" in resp.text
     assert "Driver Sedan Test" not in resp.text
+
+
+def test_web_quote_flow_accept_decline(client: TestClient):
+    # 1. Create a request of type "Cotação de preço"
+    with Session(engine) as session:
+        partner = session.exec(select(User).where(User.email == "parceiro@logtudo.local")).first()
+        sup = session.exec(select(User).where(User.email == "supervisor@logtudo.local")).first()
+        base = session.exec(select(Base)).first()
+        company = session.get(Company, partner.company_id)
+        
+        driver = Driver(name="Driver Test Quote", phone="71999998888", base_id=base.id, active=True)
+        session.add(driver)
+        session.flush()
+
+        cb = session.exec(
+            select(CompanyBase).where(
+                CompanyBase.company_id == company.id,
+                CompanyBase.base_id == base.id
+            )
+        ).first()
+        if cb:
+            exists = session.exec(
+                select(UserCompanyBaseLink).where(
+                    UserCompanyBaseLink.user_id == sup.id,
+                    UserCompanyBaseLink.company_base_id == cb.id,
+                )
+            ).first()
+            if not exists:
+                session.add(UserCompanyBaseLink(user_id=sup.id, company_base_id=cb.id))
+
+        req = TravelRequest(
+            protocol=f"VX-QUOTE-{int(datetime.now(timezone.utc).timestamp())}",
+            company_id=company.id,
+            base_id=base.id,
+            requested_by_user_id=partner.id,
+            request_type="Cotação de preço",
+            requested_datetime=datetime(2030, 1, 3, 10, 0, tzinfo=timezone.utc),
+            origin="A",
+            destination="B",
+            quantity=1,
+            vehicle_type_requested="sedan",
+            cost_center="CC",
+            reason="teste cotação",
+            status=RequestStatus.SUBMITTED,
+        )
+        session.add(req)
+        session.flush()
+        req_id = req.id
+        driver_id = driver.id
+        session.commit()
+
+    # 2. Login as supervisor and triage with tariff
+    login(client, "supervisor@logtudo.local", "supervisor123")
+    resp = client.post(
+        f"/empresa/requests/{req_id}/triage",
+        data={
+            "decision_type": "confirm",
+            "approved_quantity": 1,
+            "confirmed_datetime": "2030-01-03T10:00:00+00:00",
+            "confirmed_vehicle_type": "sedan",
+            "driver_id": str(driver_id),
+            "tariff_value": 150.00,
+            "observations": "obs cotação",
+        },
+        follow_redirects=False,
+    )
+    assert resp.status_code == 303, resp.text
+
+    # Check status is CONFIRMED
+    with Session(engine) as session:
+        req = session.get(TravelRequest, req_id)
+        assert req.status == RequestStatus.CONFIRMED
+
+    # 3. Login as partner and accept quote
+    login(client, "parceiro@logtudo.local", "parceiro123")
+    resp = client.post(f"/partner/requests/{req_id}/accept-quote", follow_redirects=False)
+    assert resp.status_code == 303
+
+    with Session(engine) as session:
+        req = session.get(TravelRequest, req_id)
+        assert req.status == RequestStatus.COMPLETED
+        # Document should be generated
+        doc = session.exec(select(Document).where(Document.request_id == req_id)).first()
+        assert doc is not None
+
+
+def test_web_quote_flow_decline(client: TestClient):
+    with Session(engine) as session:
+        partner = session.exec(select(User).where(User.email == "parceiro@logtudo.local")).first()
+        sup = session.exec(select(User).where(User.email == "supervisor@logtudo.local")).first()
+        base = session.exec(select(Base)).first()
+        company = session.get(Company, partner.company_id)
+        
+        driver = Driver(name="Driver Test Quote Dec", phone="71999998888", base_id=base.id, active=True)
+        session.add(driver)
+        session.flush()
+
+        cb = session.exec(
+            select(CompanyBase).where(
+                CompanyBase.company_id == company.id,
+                CompanyBase.base_id == base.id
+            )
+        ).first()
+        if cb:
+            exists = session.exec(
+                select(UserCompanyBaseLink).where(
+                    UserCompanyBaseLink.user_id == sup.id,
+                    UserCompanyBaseLink.company_base_id == cb.id,
+                )
+            ).first()
+            if not exists:
+                session.add(UserCompanyBaseLink(user_id=sup.id, company_base_id=cb.id))
+
+        req = TravelRequest(
+            protocol=f"VX-QUOTEDEC-{int(datetime.now(timezone.utc).timestamp())}",
+            company_id=company.id,
+            base_id=base.id,
+            requested_by_user_id=partner.id,
+            request_type="Cotação de preço",
+            requested_datetime=datetime(2030, 1, 3, 10, 0, tzinfo=timezone.utc),
+            origin="A",
+            destination="B",
+            quantity=1,
+            vehicle_type_requested="sedan",
+            cost_center="CC",
+            reason="teste cotação dec",
+            status=RequestStatus.SUBMITTED,
+        )
+        session.add(req)
+        session.flush()
+        req_id = req.id
+        driver_id = driver.id
+        session.commit()
+
+    # Triage as supervisor
+    login(client, "supervisor@logtudo.local", "supervisor123")
+    resp = client.post(
+        f"/empresa/requests/{req_id}/triage",
+        data={
+            "decision_type": "confirm",
+            "approved_quantity": 1,
+            "confirmed_datetime": "2030-01-03T10:00:00+00:00",
+            "confirmed_vehicle_type": "sedan",
+            "driver_id": str(driver_id),
+            "tariff_value": 150.00,
+            "observations": "obs cotação",
+        },
+        follow_redirects=False,
+    )
+    assert resp.status_code == 303, resp.text
+
+    # Login as partner and decline quote
+    login(client, "parceiro@logtudo.local", "parceiro123")
+    resp = client.post(f"/partner/requests/{req_id}/decline-quote", follow_redirects=False)
+    assert resp.status_code == 303
+
+    with Session(engine) as session:
+        req = session.get(TravelRequest, req_id)
+        assert req.status == RequestStatus.REFUSED
+
+
