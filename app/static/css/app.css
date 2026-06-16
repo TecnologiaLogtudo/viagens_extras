@@ -24,6 +24,16 @@ body {
     linear-gradient(150deg, var(--bg-0), var(--bg-1));
 }
 
+body.company-internal {
+  background: url('/static/imagens/textura3.png');
+  background-size: contain;
+  background-attachment: fixed;
+}
+
+body.company-internal .bg-glow {
+  display: none;
+}
+
 .bg-glow {
   position: fixed;
   inset: 0;

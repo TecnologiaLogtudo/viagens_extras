@@ -10,7 +10,7 @@
   <link rel="stylesheet" href="/static/css/app.css" />
   <script src="https://unpkg.com/htmx.org@1.9.12"></script>
 </head>
-<body>
+<body class="{% if user.role.value in ['base_supervisor', 'logistics_manager'] %}company-internal{% endif %}">
   <div class="bg-glow"></div>
   <main class="shell">
     <header class="topbar">
