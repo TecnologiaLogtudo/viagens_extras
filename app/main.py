@@ -68,7 +68,7 @@ app = FastAPI(
 app.add_middleware(SubdirMiddleware)
 app.add_middleware(
     SessionMiddleware,
-    secret_key="logtudo-viagens-extras-secret-key-change-me",
+    secret_key=os.getenv("SESSION_SECRET_KEY", "logtudo-viagens-extras-secret-key-change-me"),
     same_site="lax",
     https_only=False,
 )
