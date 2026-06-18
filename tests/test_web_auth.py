@@ -724,6 +724,49 @@ def test_manager_drivers_table_pagination(client: TestClient):
     assert "Anterior" in resp_page_2.text
 
 
+def test_driver_sorting_and_name_filter(client: TestClient):
+    login(client, "gerente@logtudo.local", "gerente123")
+    
+    with Session(engine) as session:
+        # Get base
+        base = session.exec(select(Base).order_by(Base.id)).first()
+        assert base is not None
+        base_id = base.id
+        
+        # Create driver starting with lowercase 'a' (e.g. 'ana') and uppercase 'B' (e.g. 'Bob')
+        # In case-sensitive sort, 'Bob' (B is 66) comes before 'ana' (a is 97).
+        # In case-insensitive sort, 'ana' comes before 'Bob'.
+        driver1 = Driver(name="ana", phone="71999887766", base_id=base_id, active=True)
+        driver2 = Driver(name="Bob", phone="71999887766", base_id=base_id, active=True)
+        session.add(driver1)
+        session.add(driver2)
+        session.commit()
+        
+    # 1. Query all drivers page and check that 'ana' comes before 'Bob'
+    resp = client.get("/empresa/motoristas")
+    assert resp.status_code == 200
+    
+    text = resp.text
+    idx_ana = text.find("ana")
+    idx_bob = text.find("Bob")
+    # Verify that both are found, and ana comes before Bob
+    assert idx_ana != -1
+    assert idx_bob != -1
+    assert idx_ana < idx_bob
+    
+    # 2. Query name filter for 'ana'
+    resp_filter = client.get("/empresa/motoristas/fragments/list?filter_name=Ana")
+    assert resp_filter.status_code == 200
+    assert "ana" in resp_filter.text
+    assert "Bob" not in resp_filter.text
+    
+    # 3. Query name filter for 'bob' (lowercase query, uppercase result)
+    resp_filter_bob = client.get("/empresa/motoristas/fragments/list?filter_name=bob")
+    assert resp_filter_bob.status_code == 200
+    assert "Bob" in resp_filter_bob.text
+    assert "ana" not in resp_filter_bob.text
+
+
 def test_download_comprovante_route(client: TestClient):
     import os
     from pathlib import Path

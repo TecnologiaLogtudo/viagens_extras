@@ -59,10 +59,20 @@
   <!-- Filtros da tabela -->
   <div class="filters-row" style="display: flex; gap: 1rem; margin-bottom: 1.2rem; align-items: center; flex-wrap: wrap; background: #fffcf5; border: 1px dashed var(--line); border-radius: 12px; padding: 0.65rem 0.85rem;">
     <label style="margin: 0; display: flex; align-items: center; gap: 0.5rem; font-weight: 700; font-size: 0.82rem; color: var(--muted);">
+      Buscar por Nome:
+      <input type="text" name="filter_name" value="{{ filter_name or '' }}" placeholder="Digite o nome..."
+             hx-get="/empresa/motoristas/fragments/list"
+             hx-include="[name='filter_base_id'], [name='filter_vehicle_type'], [name='filter_name']"
+             hx-trigger="keyup changed delay:300ms, search"
+             hx-target="#drivers-list"
+             hx-swap="outerHTML"
+             style="width: 180px; padding: 0.28rem 0.45rem; border-radius: 8px; font-size: 0.8rem; background: #fffdfc; border: 1px solid #c8bfae;" />
+    </label>
+    <label style="margin: 0; display: flex; align-items: center; gap: 0.5rem; font-weight: 700; font-size: 0.82rem; color: var(--muted);">
       Filtrar por Base:
       <select name="filter_base_id" 
               hx-get="/empresa/motoristas/fragments/list" 
-              hx-include="[name='filter_base_id'], [name='filter_vehicle_type']" 
+              hx-include="[name='filter_base_id'], [name='filter_vehicle_type'], [name='filter_name']" 
               hx-target="#drivers-list" 
               hx-swap="outerHTML" 
               style="width: auto; padding: 0.28rem 0.45rem; border-radius: 8px; font-size: 0.8rem; background: #fffdfc; border: 1px solid #c8bfae;">
@@ -76,7 +86,7 @@
       Filtrar por Categoria:
       <select name="filter_vehicle_type" 
               hx-get="/empresa/motoristas/fragments/list" 
-              hx-include="[name='filter_base_id'], [name='filter_vehicle_type']" 
+              hx-include="[name='filter_base_id'], [name='filter_vehicle_type'], [name='filter_name']" 
               hx-target="#drivers-list" 
               hx-swap="outerHTML" 
               style="width: auto; padding: 0.28rem 0.45rem; border-radius: 8px; font-size: 0.8rem; background: #fffdfc; border: 1px solid #c8bfae;">

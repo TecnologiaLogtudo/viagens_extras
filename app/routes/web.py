@@ -330,6 +330,7 @@ def _driver_rows(
     base_ids: set[int] | list[int] | None = None,
     filter_base_id: int | None = None,
     filter_vehicle_type: str | None = None,
+    filter_name: str | None = None,
     page: int | None = None,
     per_page: int = 12,
 ) -> tuple[list[dict], int]:
@@ -355,7 +356,11 @@ def _driver_rows(
     if filter_vehicle_type:
         query = query.where(func.lower(Vehicle.vehicle_type) == filter_vehicle_type.strip().lower())
 
-    all_results = session.exec(query.order_by(Driver.name, Base.name, Vehicle.plate)).all()
+    # 3. Apply driver name filter case-insensitively
+    if filter_name and filter_name.strip():
+        query = query.where(func.lower(Driver.name).like(f"%{filter_name.strip().lower()}%"))
+
+    all_results = session.exec(query.order_by(func.lower(Driver.name), func.lower(Base.name), func.lower(Vehicle.plate))).all()
     total_count = len(all_results)
 
     # Slicing results in Python for robustness
@@ -898,6 +903,7 @@ def company_drivers(
     request: Request,
     filter_base_id: str | None = None,
     filter_vehicle_type: str | None = None,
+    filter_name: str | None = None,
     page: int = 1,
     session: Session = Depends(get_session),
 ):
@@ -913,6 +919,7 @@ def company_drivers(
         allowed_base_ids,
         filter_base_id=actual_base_id,
         filter_vehicle_type=filter_vehicle_type,
+        filter_name=filter_name,
         page=page,
     )
     total_pages = (total_count + 11) // 12
@@ -963,6 +970,7 @@ def company_drivers(
             "filter_bases": filter_bases,
             "filter_base_id": actual_base_id,
             "filter_vehicle_type": filter_vehicle_type,
+            "filter_name": filter_name,
             "page": page,
             "total_pages": total_pages,
             "edit_driver": edit_driver,
@@ -1653,6 +1661,7 @@ def drivers_list_fragment(
     request: Request,
     filter_base_id: str | None = None,
     filter_vehicle_type: str | None = None,
+    filter_name: str | None = None,
     page: int = 1,
     session: Session = Depends(get_session),
     user: User = Depends(supervisor_or_manager),
@@ -1664,6 +1673,7 @@ def drivers_list_fragment(
         allowed_base_ids,
         filter_base_id=actual_base_id,
         filter_vehicle_type=filter_vehicle_type,
+        filter_name=filter_name,
         page=page,
     )
     total_pages = (total_count + 11) // 12
@@ -1678,6 +1688,7 @@ def drivers_list_fragment(
             "total_pages": total_pages,
             "filter_base_id": actual_base_id,
             "filter_vehicle_type": filter_vehicle_type,
+            "filter_name": filter_name,
         },
     )
 
