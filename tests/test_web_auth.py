@@ -1338,6 +1338,46 @@ def test_completed_request_cannot_be_canceled_or_triaged(client: TestClient):
     assert "Pedido fora de status para triagem ou edição" in triage_resp.json()["detail"]
 
 
+def test_profile_page_access_and_save(client: TestClient):
+    login(client, "supervisor@logtudo.local", "supervisor123")
+
+    # 1. GET /profile page
+    resp = client.get("/profile")
+    assert resp.status_code == 200
+    assert "Configurações do Perfil" in resp.text
+    # Check that base.html has the clickable username link and nav link
+    assert 'href="/profile"' in resp.text
+    assert 'Supervisor Teste' in resp.text
+
+    # 2. POST /profile update
+    resp_post = client.post(
+        "/profile",
+        data={
+            "full_name": "Supervisor Atualizado",
+            "email": "supervisor@logtudo.local",
+            "company_name": "Logtudo Logística",
+            "phone": "71 99988-7766",
+            "job_title": "Supervisor Sênior",
+            "new_password": "",
+            "confirm_password": "",
+        },
+        follow_redirects=False,
+    )
+    # Redirect back to profile page on success
+    assert resp_post.status_code == 303
+    assert "/profile?message=" in resp_post.headers["Location"]
+
+    # Verify updates in DB
+    with Session(engine) as session:
+        user = session.exec(select(User).where(User.email == "supervisor@logtudo.local")).first()
+        assert user is not None
+        assert user.full_name == "Supervisor Atualizado"
+        assert user.company_name == "Logtudo Logística"
+        assert user.phone == "71 99988-7766"
+        assert user.job_title == "Supervisor Sênior"
+
+
+
 
 
 

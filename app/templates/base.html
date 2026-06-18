@@ -19,7 +19,19 @@
         <h1>Viagens Extras</h1>
       </div>
       <div class="meta" style="align-items: center;">
-        <span>{{ user.full_name }}</span>
+        <span>
+          {% if user.role.value == 'partner_requester' %}
+            <a href="/partner/settings" style="color: inherit; text-decoration: none; display: flex; align-items: center; gap: 0.25rem;">
+              <svg viewBox="0 0 24 24" width="12" height="12" stroke="currentColor" stroke-width="2.5" fill="none" stroke-linecap="round" stroke-linejoin="round" style="opacity: 0.8;"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></svg>
+              {{ user.full_name }}
+            </a>
+          {% else %}
+            <a href="/profile" style="color: inherit; text-decoration: none; display: flex; align-items: center; gap: 0.25rem;">
+              <svg viewBox="0 0 24 24" width="12" height="12" stroke="currentColor" stroke-width="2.5" fill="none" stroke-linecap="round" stroke-linejoin="round" style="opacity: 0.8;"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></svg>
+              {{ user.full_name }}
+            </a>
+          {% endif %}
+        </span>
         <span>{% if user.role.value == 'partner_requester' %}{{ user.company_name }}{% else %}{{ user.role.value }}{% endif %}</span>
         <div class="notifications-dropdown-container">
           <button type="button" id="notif-bell-btn" class="button-like notif-bell" aria-label="Notificações">
@@ -54,6 +66,7 @@
         {% if user.role.value == 'logistics_manager' %}
           <a href="/empresa/gerencial">Gerencial</a>
         {% endif %}
+        <a href="/profile">Configurações do Perfil</a>
       {% endif %}
       <form method="post" action="/logout" class="logout-form">
         <button type="submit">Sair</button>
