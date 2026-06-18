@@ -1,6 +1,22 @@
 version: '3.8'
 
 services:
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: viagens-extras-web
+    restart: always
+    ports:
+      - "8000:8000"
+    expose:
+      - 8000
+    environment:
+      - DATABASE_URL=postgresql://postgres:postgres@db:5432/logtudo
+      - SESSION_SECRET_KEY=logtudo-viagens-extras-secret-key-change-me
+    depends_on:
+      - db
+
   db:
     image: postgres:15-alpine
     container_name: viagens-extras-postgres

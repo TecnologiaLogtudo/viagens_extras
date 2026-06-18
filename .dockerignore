@@ -1,0 +1,20 @@
+# Caches and virtual environments
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.git/
+.gitignore
+
+# Local databases and documents
+app/data/*.db
+app/data/documents/*.pdf
+
+# Project config and documentation
+docs/
+pytest.ini
+README.md
+CHANGELOG.md
+Dockerfile
+docker-compose.yml
+.env
