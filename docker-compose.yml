@@ -6,16 +6,31 @@ services:
       context: .
       dockerfile: Dockerfile
     container_name: viagens-extras-web
-    restart: always
-    ports:
-      - "8000:8000"
+    restart: 
+      - always
     expose:
       - 8000
     environment:
       - DATABASE_URL=postgresql://postgres:postgres@db:5432/logtudo
       - SESSION_SECRET_KEY=logtudo-viagens-extras-secret-key-change-me
+      - ROOT_PATH=/viagens_extras
     depends_on:
-      - db
+      db:
+        condition: service_healthy
+    # Labels para proxy reverso no Coolify (defina o seu domínio aqui)
+    labels:
+      - "coolify.link=https://logtudo.com.br/viagens_extras"
+      # Ou se preferir usar a sintaxe nativa do Traefik:
+      # - "traefik.enable=true"
+      # - "traefik.http.routers.viagens-extras.rule=Host(`logtudo.com.br`) && PathPrefix(`/viagens_extras`)"
+      # - "traefik.http.routers.viagens-extras.entrypoints=websecure"
+      # - "traefik.http.routers.viagens-extras.tls=true"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/viagens_extras/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
 
   db:
     image: postgres:15-alpine
@@ -29,6 +44,11 @@ services:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
 volumes:
   postgres_data:

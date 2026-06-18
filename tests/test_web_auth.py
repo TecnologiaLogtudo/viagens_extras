@@ -1377,6 +1377,26 @@ def test_profile_page_access_and_save(client: TestClient):
         assert user.job_title == "Supervisor Sênior"
 
 
+def test_subdir_middleware_rewrites_paths(client: TestClient):
+    import os
+    os.environ["ROOT_PATH"] = "/viagens_extras"
+    try:
+        # GET login page
+        resp = client.get("/login")
+        assert resp.status_code == 200
+        # Check that absolute links are rewritten
+        assert 'href="/viagens_extras/static/css/app.css"' in resp.text
+        assert 'href="/viagens_extras/signup"' in resp.text
+        
+        # Test redirect rewriting
+        resp_post = client.post("/logout", follow_redirects=False)
+        assert resp_post.status_code == 303
+        assert resp_post.headers["location"] == "/viagens_extras/login"
+    finally:
+        os.environ["ROOT_PATH"] = ""
+
+
+
 
 
 
