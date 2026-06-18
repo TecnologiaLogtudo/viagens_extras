@@ -1123,3 +1123,178 @@ def test_web_quote_flow_decline(client: TestClient):
         assert req.status == RequestStatus.REFUSED
 
 
+def test_sse_endpoint_behavior_and_headers(client: TestClient):
+    # Log in as supervisor to get a valid session
+    login(client, "supervisor@logtudo.local", "supervisor123")
+
+    # Connect to SSE stream
+    with client.stream("GET", "/events/stream") as resp:
+        assert resp.status_code == 200
+        assert "text/event-stream" in resp.headers["content-type"]
+        assert resp.headers["cache-control"] == "no-cache"
+        assert resp.headers["connection"] == "keep-alive"
+        assert resp.headers["x-accel-buffering"] == "no"
+
+        # Read the first chunk (should contain heartbeat comment or event data)
+        iterator = resp.iter_lines()
+        first_line = next(iterator)
+        assert ":" in first_line or "id:" in first_line
+
+
+def test_pending_acceptance_kpi_counting_rules(client: TestClient):
+    """Test that the pending_acceptance KPI card counts only requests of type 'Cotação de preço'
+
+    that are in CONFIRMED status, and ignores other request types even if they are in CONFIRMED status.
+    """
+    with Session(engine) as session:
+        partner = session.exec(select(User).where(User.email == "parceiro@logtudo.local")).first()
+        sup = session.exec(select(User).where(User.email == "supervisor@logtudo.local")).first()
+        base = session.exec(select(Base)).first()
+        company = session.get(Company, partner.company_id)
+
+        # Ensure supervisor is linked to this base/company_base
+        cb = session.exec(
+            select(CompanyBase).where(
+                CompanyBase.company_id == company.id,
+                CompanyBase.base_id == base.id
+            )
+        ).first()
+        if cb:
+            exists = session.exec(
+                select(UserCompanyBaseLink).where(
+                    UserCompanyBaseLink.user_id == sup.id,
+                    UserCompanyBaseLink.company_base_id == cb.id,
+                )
+            ).first()
+            if not exists:
+                session.add(UserCompanyBaseLink(user_id=sup.id, company_base_id=cb.id))
+
+        # 1. Create a CONFIRMED request of type "Cotação de preço"
+        req_quote = TravelRequest(
+            protocol=f"VX-T-QUOTE-{int(datetime.now(timezone.utc).timestamp())}",
+            company_id=company.id,
+            base_id=base.id,
+            requested_by_user_id=partner.id,
+            request_type="Cotação de preço",
+            requested_datetime=datetime(2030, 1, 3, 10, 0, tzinfo=timezone.utc),
+            origin="A",
+            destination="B",
+            quantity=1,
+            vehicle_type_requested="sedan",
+            cost_center="CC",
+            reason="teste kpi quote",
+            status=RequestStatus.CONFIRMED,
+        )
+
+        # 2. Create a CONFIRMED request of type "Carro dedicado" (not a quote)
+        req_dedicated = TravelRequest(
+            protocol=f"VX-T-DED-{int(datetime.now(timezone.utc).timestamp())}",
+            company_id=company.id,
+            base_id=base.id,
+            requested_by_user_id=partner.id,
+            request_type="Carro dedicado",
+            requested_datetime=datetime(2030, 1, 3, 10, 0, tzinfo=timezone.utc),
+            origin="A",
+            destination="B",
+            quantity=1,
+            vehicle_type_requested="sedan",
+            cost_center="CC",
+            reason="teste kpi dedicated",
+            status=RequestStatus.CONFIRMED,
+        )
+
+        session.add(req_quote)
+        session.add(req_dedicated)
+        session.commit()
+
+    # 3. Request metrics as partner
+    login(client, "parceiro@logtudo.local", "parceiro123")
+    partner_metrics = client.get("/partner/fragments/metrics")
+    assert partner_metrics.status_code == 200
+    # The counts.pending_acceptance must be 1, because the dedicated request is ignored
+    assert "Aguardando aceite" in partner_metrics.text
+    assert "<strong>1</strong>" in partner_metrics.text
+
+    # 4. Request metrics as supervisor
+    login(client, "supervisor@logtudo.local", "supervisor123")
+    op_metrics = client.get("/empresa/operacoes/fragments/metrics")
+    assert op_metrics.status_code == 200
+    assert "Aguardando aceite" in op_metrics.text
+    assert "<strong>1</strong>" in op_metrics.text
+
+
+def test_completed_request_cannot_be_canceled_or_triaged(client: TestClient):
+    """Test that once a travel request is in COMPLETED status,
+
+    it cannot be canceled or edited/triaged.
+    """
+    with Session(engine) as session:
+        partner = session.exec(select(User).where(User.email == "parceiro@logtudo.local")).first()
+        sup = session.exec(select(User).where(User.email == "supervisor@logtudo.local")).first()
+        base = session.exec(select(Base)).first()
+        company = session.get(Company, partner.company_id)
+
+        # Ensure supervisor is linked to this base/company_base
+        cb = session.exec(
+            select(CompanyBase).where(
+                CompanyBase.company_id == company.id,
+                CompanyBase.base_id == base.id
+            )
+        ).first()
+        if cb:
+            exists = session.exec(
+                select(UserCompanyBaseLink).where(
+                    UserCompanyBaseLink.user_id == sup.id,
+                    UserCompanyBaseLink.company_base_id == cb.id,
+                )
+            ).first()
+            if not exists:
+                session.add(UserCompanyBaseLink(user_id=sup.id, company_base_id=cb.id))
+
+        # Create a COMPLETED travel request
+        req = TravelRequest(
+            protocol=f"VX-T-COMPLETED-{int(datetime.now(timezone.utc).timestamp())}",
+            company_id=company.id,
+            base_id=base.id,
+            requested_by_user_id=partner.id,
+            request_type="Carro dedicado",
+            requested_datetime=datetime(2030, 1, 3, 10, 0, tzinfo=timezone.utc),
+            origin="A",
+            destination="B",
+            quantity=1,
+            vehicle_type_requested="sedan",
+            cost_center="CC",
+            reason="teste cancel/edit completed",
+            status=RequestStatus.COMPLETED,
+        )
+        session.add(req)
+        session.commit()
+        req_id = req.id
+
+    # 1. Login as supervisor
+    login(client, "supervisor@logtudo.local", "supervisor123")
+
+    # 2. Try to cancel and check that it returns HTTP 400
+    cancel_resp = client.post(f"/empresa/requests/{req_id}/cancel", data={"reason": "Test cancel completed"})
+    assert cancel_resp.status_code == 400
+    assert "Não é possível cancelar uma viagem já concluída" in cancel_resp.json()["detail"]
+
+    # 3. Try to triage/edit and check that it returns HTTP 400
+    triage_resp = client.post(
+        f"/empresa/requests/{req_id}/triage",
+        data={
+            "decision_type": "confirm",
+            "approved_quantity": 1,
+            "confirmed_datetime": "2030-01-03T10:00:00+00:00",
+            "confirmed_vehicle_type": ["sedan"],
+            "driver_id": ["1"],
+            "observations": "tente editar",
+        }
+    )
+    assert triage_resp.status_code == 400
+    assert "Pedido fora de status para triagem ou edição" in triage_resp.json()["detail"]
+
+
+
+
+

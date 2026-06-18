@@ -241,6 +241,27 @@ def log_event(session: Session, request_id: Optional[int], actor_user_id: Option
     session.add(EventLog(request_id=request_id, actor_user_id=actor_user_id, event_type=event_type, payload=payload))
 
 
+def create_in_app_notification(
+    session: Session,
+    user_id: int,
+    ntype: NotificationType | str,
+    subject: str,
+    body: str,
+    request_id: Optional[int] = None,
+) -> None:
+    session.add(
+        Notification(
+            request_id=request_id,
+            user_id=user_id,
+            type=ntype if isinstance(ntype, NotificationType) else NotificationType.REQUEST_CONFIRMED, # Just a fallback if we use custom string
+            channel="in_app",
+            recipient="in_app",
+            subject=subject,
+            body=body,
+            is_read=False,
+        )
+    )
+
 def send_email_notification(
     session: Session,
     ntype: NotificationType,
@@ -250,6 +271,7 @@ def send_email_notification(
     request_id: Optional[int] = None,
     user_id: Optional[int] = None,
     strict_delivery: bool = False,
+    attachment_path: str | None = None,
 ) -> None:
     session.add(
         Notification(
@@ -259,20 +281,63 @@ def send_email_notification(
             recipient=recipient,
             subject=subject,
             body=body,
+            is_read=False,
         )
     )
+    if user_id is not None:
+        session.add(
+            Notification(
+                request_id=request_id,
+                user_id=user_id,
+                type=ntype,
+                channel="in_app",
+                recipient="in_app",
+                subject=subject,
+                body=body,
+                is_read=False,
+            )
+        )
     try:
-        send_email(recipient, subject, body)
+        send_email(recipient, subject, body, attachment_path=attachment_path)
     except EmailDeliveryError:
         if strict_delivery:
             raise
         logger.exception("Falha ao enviar notificacao de e-mail para %s", recipient)
 
 
-def generate_protocol(session: Session) -> str:
-    date_part = now_utc().strftime("%Y%m%d")
-    count = session.exec(select(TravelRequest)).all()
-    return f"VX-{date_part}-{len(count)+1:04d}"
+def generate_protocol(session: Session, base_id: int, base_name: str) -> str:
+    now = now_utc()
+    date_part = now.strftime("%d%m%y")
+    prefix = f"{base_name.upper()}-{date_part}-"
+    
+    # Reset sequence daily per base by finding the max sequence number for today
+    start_of_day = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    requests_today = session.exec(
+        select(TravelRequest)
+        .where(TravelRequest.base_id == base_id)
+        .where(TravelRequest.created_at >= start_of_day)
+    ).all()
+    
+    max_seq = 0
+    for req in requests_today:
+        if req.protocol and req.protocol.startswith(prefix):
+            try:
+                seq_str = req.protocol.replace(prefix, "")
+                seq_num = int(seq_str)
+                if seq_num > max_seq:
+                    max_seq = seq_num
+            except ValueError:
+                pass
+                
+    seq = max_seq + 1
+    
+    # Ensure it's absolutely unique in the database
+    while True:
+        protocol_candidate = f"{prefix}{seq:04d}"
+        existing = session.exec(select(TravelRequest).where(TravelRequest.protocol == protocol_candidate)).first()
+        if not existing:
+            return protocol_candidate
+        seq += 1
 
 
 def create_request(session: Session, user: User, payload: TravelRequestCreate) -> TravelRequest:
@@ -305,7 +370,7 @@ def create_request(session: Session, user: User, payload: TravelRequestCreate) -
             raise DomainError(f"Antecedência mínima não atendida. Este parceiro exige antecedência mínima de {min_advance} minutos.")
 
     request = TravelRequest(
-        protocol=generate_protocol(session),
+        protocol=generate_protocol(session, base.id, base.name),
         company_id=user.company_id,
         base_id=payload.base_id,
         requested_by_user_id=user.id,
@@ -325,32 +390,72 @@ def create_request(session: Session, user: User, payload: TravelRequestCreate) -
 
     log_event(session, request.id, user.id, "request_submitted", f"protocol={request.protocol}")
 
-    supervisors = session.exec(
-        select(User)
-        .join(UserCompanyBaseLink, UserCompanyBaseLink.user_id == User.id)
-        .join(CompanyBase, CompanyBase.id == UserCompanyBaseLink.company_base_id)
-        .where(
-            and_(
-                User.role == UserRole.BASE_SUPERVISOR,
-                User.is_active == True,
-                CompanyBase.company_id == request.company_id,
-                CompanyBase.base_id == request.base_id,
-            )
+    operators = session.exec(
+        select(User).where(
+            User.role.in_([UserRole.BASE_SUPERVISOR, UserRole.LOGISTICS_MANAGER]),
+            User.is_active == True,
         )
-        .distinct()
     ).all()
-    for sup in supervisors:
+    company = session.get(Company, request.company_id)
+    company_name = company.name if company else "Parceiro"
+    from zoneinfo import ZoneInfo
+    try:
+        local_dt = request.requested_datetime.astimezone(ZoneInfo("America/Sao_Paulo"))
+    except Exception:
+        local_dt = request.requested_datetime
+    formatted_dt = local_dt.strftime("%d/%m/%Y às %H:%M")
+
+    for op in operators:
+        if op.role == UserRole.BASE_SUPERVISOR and not supervisor_can_access_request(session, op, request):
+            continue
+
+        role_label = "Supervisor" if op.role == UserRole.BASE_SUPERVISOR else "Gerente"
+        if request.request_type == "Cotação de preço":
+            subject = f"Nova solicitação de cotação de preço - Protocolo {request.protocol}"
+            body = (
+                f"Olá, {role_label}.\n\n"
+                f"Uma nova solicitação de cotação de preço foi registrada no sistema e necessita de sua análise e precificação.\n\n"
+                f"Detalhes da Solicitação:\n"
+                f"• Protocolo: {request.protocol}\n"
+                f"• Empresa Solicitante: {company_name}\n"
+                f"• Origem: {request.origin}\n"
+                f"• Destino: {request.destination}\n"
+                f"• Veículo Solicitado: {request.vehicle_type_requested}\n"
+                f"• Quantidade: {request.quantity}\n"
+                f"• Data/Hora do Carregamento: {formatted_dt}\n\n"
+                f"Por favor, acesse o painel operacional para realizar a triagem e enviar a resposta com o valor da tarifa ao parceiro.\n\n"
+                f"Atenciosamente,\n"
+                f"Sistema de Viagens Extras Logtudo"
+            )
+        else:
+            subject = f"Nova solicitação de viagem extra - Protocolo {request.protocol}"
+            body = (
+                f"Olá, {role_label}.\n\n"
+                f"Uma nova solicitação de viagem extra foi registrada no sistema para sua base.\n\n"
+                f"Detalhes da Solicitação:\n"
+                f"• Protocolo: {request.protocol}\n"
+                f"• Empresa Solicitante: {company_name}\n"
+                f"• Origem: {request.origin}\n"
+                f"• Destino: {request.destination}\n"
+                f"• Veículo Solicitado: {request.vehicle_type_requested}\n"
+                f"• Quantidade: {request.quantity}\n"
+                f"• Data/Hora do Carregamento: {formatted_dt}\n\n"
+                f"Por favor, acesse o painel operacional para realizar a triagem e alocação do motorista.\n\n"
+                f"Atenciosamente,\n"
+                f"Sistema de Viagens Extras Logtudo"
+            )
         send_email_notification(
             session,
             NotificationType.REQUEST_SUBMITTED,
-            sup.email,
-            f"Novo pedido {request.protocol}",
-            "Novo pedido submetido para sua base.",
+            op.email,
+            subject,
+            body,
             request_id=request.id,
-            user_id=sup.id,
+            user_id=op.id,
         )
 
     session.commit()
+
     session.refresh(request)
     return request
 
@@ -380,7 +485,7 @@ def triage_request(session: Session, user: User, request: TravelRequest, payload
         raise DomainError("Perfil sem permissão para triagem.")
     ensure_user_scope(session, user, request)
 
-    if request.status not in (RequestStatus.SUBMITTED, RequestStatus.TRIAGE, RequestStatus.CONFIRMED, RequestStatus.COMPLETED):
+    if request.status not in (RequestStatus.SUBMITTED, RequestStatus.TRIAGE, RequestStatus.CONFIRMED):
         raise DomainError("Pedido fora de status para triagem ou edição.")
 
     request.status = RequestStatus.TRIAGE
@@ -462,33 +567,84 @@ def triage_request(session: Session, user: User, request: TravelRequest, payload
         
         log_event(session, request.id, user.id, "request_confirmed", payload.decision_type.value)
 
-        requester = session.get(User, request.requested_by_user_id)
-        if requester:
-            if request.status == RequestStatus.CONFIRMED:
-                send_email_notification(
-                    session,
-                    NotificationType.REQUEST_CONFIRMED,
-                    requester.email,
-                    f"Cotação enviada para o pedido {request.protocol}",
-                    "A operação enviou uma cotação para o seu pedido. Acesse o portal para aceitar ou declinar.",
-                    request_id=request.id,
-                    user_id=requester.id,
-                )
-            else:
-                send_email_notification(
-                    session,
-                    NotificationType.REQUEST_CONFIRMED,
-                    requester.email,
-                    f"Pedido {request.protocol} concluído",
-                    "A operação confirmou e concluiu o pedido. O comprovante está disponível no portal.",
-                    request_id=request.id,
-                    user_id=requester.id,
-                )
-
     session.add(request)
+    doc_path = None
     if payload.decision_type != DecisionType.REFUSE and request.status == RequestStatus.COMPLETED:
         session.flush()
-        generate_pdf_document(session, request)
+        doc = generate_pdf_document(session, request)
+        doc_path = doc.file_path
+
+    requester = session.get(User, request.requested_by_user_id)
+    if requester:
+        from zoneinfo import ZoneInfo
+        try:
+            local_dt = request.requested_datetime.astimezone(ZoneInfo("America/Sao_Paulo"))
+        except Exception:
+            local_dt = request.requested_datetime
+        formatted_dt = local_dt.strftime("%d/%m/%Y às %H:%M")
+
+        if request.status == RequestStatus.CONFIRMED:
+            conf = session.exec(
+                select(OperationalConfirmation).where(OperationalConfirmation.request_id == request.id)
+            ).first()
+            tariff_val = conf.tariff_value if conf else payload.tariff_value
+            app_qty = conf.approved_quantity if conf else payload.approved_quantity
+            conf_vt = conf.confirmed_vehicle_type if conf else payload.confirmed_vehicle_type
+            try:
+                c_dt = (conf.confirmed_datetime if conf else payload.confirmed_datetime).astimezone(ZoneInfo("America/Sao_Paulo"))
+            except Exception:
+                c_dt = conf.confirmed_datetime if conf else payload.confirmed_datetime
+            conf_dt_str = c_dt.strftime("%d/%m/%Y às %H:%M")
+            obs_str = f"• Observações: {conf.observations}\n" if (conf and conf.observations) else ""
+
+            subject = f"Cotação enviada para o pedido {request.protocol}"
+            body = (
+                f"Olá, {requester.full_name}.\n\n"
+                f"A equipe de operações da Logtudo respondeu à sua solicitação de cotação de preço para o protocolo {request.protocol}.\n\n"
+                f"Detalhes da Proposta:\n"
+                f"• Protocolo: {request.protocol}\n"
+                f"• Valor da Tarifa: R$ {tariff_val:.2f}\n"
+                f"• Veículos/Quantidade Confirmada: {app_qty}x {conf_vt}\n"
+                f"• Data/Hora Proposta: {conf_dt_str}\n"
+                f"{obs_str}\n"
+                f"Por favor, acesse o Portal do Parceiro para analisar e aceitar ou declinar a proposta de tarifa enviada.\n\n"
+                f"Atenciosamente,\n"
+                f"Equipe Logtudo"
+            )
+            send_email_notification(
+                session,
+                NotificationType.REQUEST_CONFIRMED,
+                requester.email,
+                subject,
+                body,
+                request_id=request.id,
+                user_id=requester.id,
+            )
+        else:
+            subject = f"Pedido {request.protocol} concluído com sucesso"
+            body = (
+                f"Olá, {requester.full_name}.\n\n"
+                f"Temos a satisfação de informar que a sua solicitação de transporte de protocolo {request.protocol} foi confirmada e concluída com sucesso pela nossa equipe de operações.\n\n"
+                f"O comprovante detalhado de agendamento e alocação foi gerado e está em anexo a este e-mail. Você também pode visualizá-lo a qualquer momento acessando o Portal do Parceiro.\n\n"
+                f"Resumo da Viagem:\n"
+                f"• Protocolo: {request.protocol}\n"
+                f"• Origem: {request.origin}\n"
+                f"• Destino: {request.destination}\n"
+                f"• Data/Hora: {formatted_dt}\n\n"
+                f"Agradecemos pela parceria. Se tiver qualquer dúvida, estamos à disposição.\n\n"
+                f"Atenciosamente,\n"
+                f"Equipe Logtudo"
+            )
+            send_email_notification(
+                session,
+                NotificationType.REQUEST_CONFIRMED,
+                requester.email,
+                subject,
+                body,
+                request_id=request.id,
+                user_id=requester.id,
+                attachment_path=doc_path,
+            )
     session.commit()
 
 
@@ -524,6 +680,29 @@ def propose_change(session: Session, user: User, request: TravelRequest, payload
     
     log_event(session, request.id, user.id, "request_modified_by_partner", "Partner proposed changes, resetting triage.")
     session.add(request)
+    session.commit()
+    
+    operators = session.exec(
+        select(User).where(
+            User.role.in_([UserRole.BASE_SUPERVISOR, UserRole.LOGISTICS_MANAGER]),
+            User.is_active == True,
+        )
+    ).all()
+    for op in operators:
+        if op.role == UserRole.BASE_SUPERVISOR and not supervisor_can_access_request(session, op, request):
+            continue
+        role_label = "Supervisor" if op.role == UserRole.BASE_SUPERVISOR else "Gerente"
+        subject = f"Alteração Proposta: {request.protocol}"
+        body = f"Olá, {role_label}.\n\nO parceiro {user.full_name} propôs uma alteração para a solicitação {request.protocol}. Ela retornou para o status de Pendente de Triagem."
+        send_email_notification(
+            session,
+            NotificationType.REQUEST_SUBMITTED,
+            op.email,
+            subject,
+            body,
+            request_id=request.id,
+            user_id=op.id,
+        )
     session.commit()
 
 
@@ -604,11 +783,68 @@ def cancel_request(session: Session, user: User, request: TravelRequest, reason:
 
     if request.status == RequestStatus.CANCELED:
         raise DomainError("Pedido já cancelado.")
+    if request.status == RequestStatus.COMPLETED:
+        raise DomainError("Não é possível cancelar uma viagem já concluída.")
 
     request.status = RequestStatus.CANCELED
     request.updated_at = now_utc()
     session.add(request)
     log_event(session, request.id, user.id, "request_canceled", reason or "")
+
+    requester = session.get(User, request.requested_by_user_id)
+    if requester:
+        from zoneinfo import ZoneInfo
+        try:
+            local_dt = request.requested_datetime.astimezone(ZoneInfo("America/Sao_Paulo"))
+        except Exception:
+            local_dt = request.requested_datetime
+        formatted_dt = local_dt.strftime("%d/%m/%Y às %H:%M")
+
+        reason_str = reason or "Não informado"
+        subject = f"Solicitação cancelada: {request.protocol}"
+        body = (
+            f"Olá, {requester.full_name}.\n\n"
+            f"Gostaríamos de informar que a solicitação de transporte de protocolo {request.protocol} foi cancelada pela equipe de operações da Logtudo.\n\n"
+            f"Detalhes da Solicitação:\n"
+            f"• Protocolo: {request.protocol}\n"
+            f"• Origem: {request.origin}\n"
+            f"• Destino: {request.destination}\n"
+            f"• Data/Hora Programada: {formatted_dt}\n"
+            f"• Motivo do cancelamento: {reason_str}\n\n"
+            f"Caso tenha dúvidas ou precise de mais informações, por favor, entre em contato conosco.\n\n"
+            f"Atenciosamente,\n"
+            f"Equipe Logtudo"
+        )
+        send_email_notification(
+            session,
+            NotificationType.REQUEST_CANCELED,
+            requester.email,
+            subject,
+            body,
+            request_id=request.id,
+            user_id=requester.id,
+        )
+
+    # Notify supervisors and managers
+    operators = session.exec(
+        select(User).where(
+            User.role.in_([UserRole.BASE_SUPERVISOR, UserRole.LOGISTICS_MANAGER]),
+            User.is_active == True,
+        )
+    ).all()
+    for op in operators:
+        if op.role == UserRole.BASE_SUPERVISOR and not supervisor_can_access_request(session, op, request):
+            continue
+        send_email_notification(
+            session,
+            NotificationType.REQUEST_CANCELED,
+            op.email,
+            f"Solicitação Cancelada: {request.protocol}",
+            f"A solicitação {request.protocol} foi cancelada. Motivo: {reason or 'Não informado'}.",
+            request_id=request.id,
+            user_id=op.id,
+        )
+
     session.commit()
     session.refresh(request)
     return request
@@ -719,15 +955,22 @@ def generate_pdf_document(session: Session, request: TravelRequest) -> Document:
     # Operational Confirmation
     conf = session.exec(select(OperationalConfirmation).where(OperationalConfirmation.request_id == request.id)).first()
     
+    from zoneinfo import ZoneInfo
+    
+    def local_dt(dt: datetime | None) -> datetime | None:
+        if not dt:
+            return None
+        return ensure_aware(dt).astimezone(ZoneInfo("America/Sao_Paulo"))
+
     # Acceptance & Signer (fallback for legacy requests)
     acceptance = session.exec(select(Acceptance).where(Acceptance.request_id == request.id)).first()
     if acceptance:
         signer = session.get(User, acceptance.user_id)
-        approval_date_str = acceptance.accepted_at.strftime("%d/%m/%Y %H:%M")
+        approval_date_str = local_dt(acceptance.accepted_at).strftime("%d/%m/%Y %H:%M") if acceptance.accepted_at else "N/A"
         approval_method = "OTP (One-Time Password)"
     elif conf:
         signer = session.get(User, conf.supervisor_user_id)
-        approval_date_str = conf.created_at.strftime("%d/%m/%Y %H:%M") if conf.created_at else "N/A"
+        approval_date_str = local_dt(conf.created_at).strftime("%d/%m/%Y %H:%M") if conf.created_at else "N/A"
         approval_method = "Confirmação do Supervisor"
     else:
         signer = None
@@ -779,6 +1022,8 @@ def generate_pdf_document(session: Session, request: TravelRequest) -> Document:
         textColor=HexColor("#0f172a")
     )
 
+    req_local_dt = local_dt(request.requested_datetime)
+
     # --- Table Data ---
     data = [
         [Paragraph("1. Dados do Fornecedor (Solicitante)", header_style), ""],
@@ -786,8 +1031,8 @@ def generate_pdf_document(session: Session, request: TravelRequest) -> Document:
         [Paragraph("Nome do Fornecedor:", bold_style), Paragraph(company.name if company else "N/A", normal_style)],
         
         [Paragraph("2. Dados da Solicitação", header_style), ""],
-        [Paragraph("Data de Agendamento:", bold_style), Paragraph(request.requested_datetime.strftime("%d/%m/%Y") if request.requested_datetime else "N/A", normal_style)],
-        [Paragraph("Horário:", bold_style), Paragraph(request.requested_datetime.strftime("%H:%M") if request.requested_datetime else "N/A", normal_style)],
+        [Paragraph("Data de Agendamento:", bold_style), Paragraph(req_local_dt.strftime("%d/%m/%Y") if req_local_dt else "N/A", normal_style)],
+        [Paragraph("Horário:", bold_style), Paragraph(req_local_dt.strftime("%H:%M") if req_local_dt else "N/A", normal_style)],
         [Paragraph("Base:", bold_style), Paragraph(f"{base.name} - {base.location}" if base else "N/A", normal_style)],
         [Paragraph("Tipo de pedido:", bold_style), Paragraph("Viagem extra", normal_style)],
         [Paragraph("Nº do Pedido:", bold_style), Paragraph(request.protocol, normal_style)],
@@ -928,14 +1173,36 @@ def complete_trip(
 
     requester = session.get(User, request.requested_by_user_id)
     if requester:
+        from zoneinfo import ZoneInfo
+        try:
+            local_dt = request.requested_datetime.astimezone(ZoneInfo("America/Sao_Paulo"))
+        except Exception:
+            local_dt = request.requested_datetime
+        formatted_dt = local_dt.strftime("%d/%m/%Y às %H:%M")
+
+        subject = f"Pedido {request.protocol} concluído com sucesso"
+        body = (
+            f"Olá, {requester.full_name}.\n\n"
+            f"Temos a satisfação de informar que a sua solicitação de transporte de protocolo {request.protocol} foi confirmada e concluída com sucesso pela nossa equipe de operações.\n\n"
+            f"O comprovante detalhado de agendamento e alocação foi gerado e está em anexo a este e-mail. Você também pode visualizá-lo a qualquer momento acessando o Portal do Parceiro.\n\n"
+            f"Resumo da Viagem:\n"
+            f"• Protocolo: {request.protocol}\n"
+            f"• Origem: {request.origin}\n"
+            f"• Destino: {request.destination}\n"
+            f"• Data/Hora: {formatted_dt}\n\n"
+            f"Agradecemos pela parceria. Se tiver qualquer dúvida, estamos à disposição.\n\n"
+            f"Atenciosamente,\n"
+            f"Equipe Logtudo"
+        )
         send_email_notification(
             session,
             NotificationType.TRIP_COMPLETED,
             requester.email,
-            f"Viagem concluida {request.protocol}",
-            "Comprovante disponivel no portal.",
+            subject,
+            body,
             request_id=request.id,
             user_id=requester.id,
+            attachment_path=document.file_path,
         )
 
     session.commit()

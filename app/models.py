@@ -44,12 +44,14 @@ class NotificationType(str, Enum):
     ACCEPTANCE_SIGNED = "acceptance_signed"
     SLA_CRITICAL = "sla_critical"
     TRIP_COMPLETED = "trip_completed"
+    REQUEST_CANCELED = "request_canceled"
 
 
 class Company(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     name: str
     cnpj: str
+    logo_path: Optional[str] = None
     active: bool = True
 
 
@@ -205,6 +207,7 @@ class Notification(SQLModel, table=True):
     subject: str
     body: str
     sent_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    is_read: bool = Field(default=False)
 
 
 class EventLog(SQLModel, table=True):

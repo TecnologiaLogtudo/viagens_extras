@@ -28,7 +28,7 @@
       </div>
       <div class="selected-meta-item">
         <span>Data/Hora Solicitada</span>
-        <strong>{{ selected_request.requested_datetime.strftime('%d/%m/%Y às %H:%M') }}</strong>
+        <strong>{{ selected_request.requested_datetime | local_time('%d/%m/%Y às %H:%M') }}</strong>
       </div>
     </div>
 
@@ -98,7 +98,7 @@
             </div>
             <div class="driver-card-info-item">
               <span>Atualizado em:</span>
-              <strong>{{ driver.status_updated_at.strftime('%d/%m/%Y %H:%M') }}</strong>
+              <strong>{{ driver.status_updated_at | local_time('%d/%m/%Y %H:%M') }}</strong>
             </div>
           </div>
         </div>
@@ -112,7 +112,7 @@
               {% set wa_num = clean_phone if clean_phone.startswith('55') else '55' ~ clean_phone %}
               
               <!-- Professional pre-filled message -->
-              {% set wa_msg = "Olá, " ~ driver.name ~ "! Você está disponível para realizar a viagem extra de protocolo " ~ selected_request.protocol ~ "?\n\n*Detalhes da Viagem:*\n• Origem: " ~ selected_request.origin ~ "\n• Destino: " ~ selected_request.destination ~ "\n• Data/Hora solicitada: " ~ selected_request.requested_datetime.strftime('%d/%m/%Y às %H:%M') ~ "\n\nPor favor, confirme se você está disponível." %}
+              {% set wa_msg = "Olá, " ~ driver.name ~ "! Você está disponível para realizar a viagem extra de protocolo " ~ selected_request.protocol ~ "?\n\n*Detalhes da Viagem:*\n• Origem: " ~ selected_request.origin ~ "\n• Destino: " ~ selected_request.destination ~ "\n• Data/Hora solicitada: " ~ (selected_request.requested_datetime | local_time('%d/%m/%Y às %H:%M')) ~ "\n\nPor favor, confirme se você está disponível." %}
               
               <!-- WhatsApp green button -->
               <a href="https://wa.me/{{ wa_num }}?text={{ wa_msg | urlencode }}" 

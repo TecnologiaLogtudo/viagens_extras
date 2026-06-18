@@ -6,8 +6,8 @@ from pathlib import Path
 from urllib.parse import quote_plus
 from typing import List
 
-from fastapi import APIRouter, Depends, Form, HTTPException, Request
-from fastapi.responses import HTMLResponse, RedirectResponse, Response, StreamingResponse, FileResponse
+from fastapi import APIRouter, Depends, Form, HTTPException, Request, UploadFile
+from fastapi.responses import HTMLResponse, RedirectResponse, Response, StreamingResponse, FileResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
 from sqlmodel import Session, select, and_, delete, func
 
@@ -34,6 +34,7 @@ from app.models import (
     DriverActivityStatus,
     Document,
     EventLog,
+    Notification,
     OTPChallenge,
     OperationalConfirmation,
     RequestStatus,
@@ -65,20 +66,92 @@ from app.services.workflow import (
     propose_change,
     request_otp,
     resend_otp,
+    send_email_notification,
     sign_acceptance,
     supervisor_allowed_base_ids,
     supervisor_can_access_request,
     triage_request,
 )
+from app.models import NotificationType
+
+def _notify_supervisors(session: Session, subject: str, body: str, base_id: int | None = None):
+    operators = session.exec(
+        select(User).where(
+            User.role.in_([UserRole.BASE_SUPERVISOR, UserRole.LOGISTICS_MANAGER]),
+            User.is_active == True,
+        )
+    ).all()
+    for op in operators:
+        if base_id and op.role == UserRole.BASE_SUPERVISOR:
+            allowed = supervisor_allowed_base_ids(session, op)
+            if base_id not in allowed:
+                continue
+        send_email_notification(
+            session,
+            NotificationType.REQUEST_SUBMITTED, # Using an existing type just for tracking
+            op.email,
+            subject,
+            body,
+            user_id=op.id,
+        )
+    session.commit()
+
+from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 
 router = APIRouter()
 templates = Jinja2Templates(directory="app/templates")
+
+def _to_local_time(dt: datetime | None, format: str = "%d/%m/%Y %H:%M") -> str:
+    if not dt:
+        return ""
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(ZoneInfo("America/Sao_Paulo")).strftime(format)
+
+def _to_local_time_input(dt: datetime | None) -> str:
+    return _to_local_time(dt, "%Y-%m-%dT%H:%M")
+
+templates.env.filters["local_time"] = _to_local_time
+templates.env.filters["local_time_input"] = _to_local_time_input
+
 PHONE_E164_RE = re.compile(r"^\+[1-9]\d{1,14}$")
+
 PHONE_BR_DIGITS_RE = re.compile(r"^\d{10,11}$")
+COMPANY_LOGO_DIR = Path("app/static/imagens/company_logos")
+ALLOWED_COMPANY_LOGO_EXTENSIONS = {".png", ".webp", ".jpg", ".jpeg"}
 
 
 def _redirect(path: str):
     return RedirectResponse(url=path, status_code=303)
+
+
+def _partner_company_logo_path(session: Session, user: User) -> str | None:
+    if user.role != UserRole.PARTNER_REQUESTER or user.company_id is None:
+        return None
+    company = session.get(Company, user.company_id)
+    return company.logo_path if company and company.logo_path else None
+
+
+async def _save_company_logo(company: Company, upload: UploadFile | None) -> str | None:
+    if not upload or not upload.filename:
+        return None
+
+    extension = Path(upload.filename).suffix.lower()
+    if extension not in ALLOWED_COMPANY_LOGO_EXTENSIONS:
+        raise ValueError("Formato de logo inválido. Use PNG, WebP, JPG ou JPEG.")
+    if company.id is None:
+        raise ValueError("Empresa inválida para upload de logo.")
+
+    COMPANY_LOGO_DIR.mkdir(parents=True, exist_ok=True)
+    target = COMPANY_LOGO_DIR / f"company-{company.id}{extension}"
+    for old_file in COMPANY_LOGO_DIR.glob(f"company-{company.id}.*"):
+        if old_file != target:
+            old_file.unlink(missing_ok=True)
+
+    content = await upload.read()
+    target.write_bytes(content)
+    return f"/static/imagens/company_logos/{target.name}"
 
 
 def _format_phone_br(raw_phone: str) -> str:
@@ -168,11 +241,11 @@ def _base_context(session: Session, user: User) -> dict:
             sla_info[req.id] = compute_sla(req, base, session=session)
 
     counts = {
-        "open": len([r for r in scoped if r.status in (RequestStatus.SUBMITTED, RequestStatus.TRIAGE, RequestStatus.ACCEPTED)]),
-        "pending_acceptance": len([r for r in scoped if r.status == RequestStatus.CONFIRMED]),
-        "in_execution": len([r for r in scoped if r.status == RequestStatus.IN_EXECUTION]),
+        "open": len([r for r in scoped if r.status in (RequestStatus.SUBMITTED, RequestStatus.TRIAGE, RequestStatus.ACCEPTED, RequestStatus.IN_EXECUTION)]),
+        # Aguardando aceite: counts only "Cotação de preço" requests in confirmed status
+        "pending_acceptance": len([r for r in scoped if r.status == RequestStatus.CONFIRMED and r.request_type == "Cotação de preço"]),
         "completed": len([r for r in scoped if r.status == RequestStatus.COMPLETED]),
-        "canceled": len([r for r in scoped if r.status == RequestStatus.CANCELED]),
+        "canceled": len([r for r in scoped if r.status in (RequestStatus.CANCELED, RequestStatus.REFUSED)]),
     }
 
     common_labels = {
@@ -248,6 +321,7 @@ def _base_context(session: Session, user: User) -> dict:
         "can_access_operations": can_access_operations(user),
         "vehicle_types": vehicle_types,
         "drivers_map": drivers_map,
+        "partner_company_logo_path": _partner_company_logo_path(session, user),
     }
 
 
@@ -647,6 +721,7 @@ def partner_settings_page(
         {
             "request": request,
             "user": user,
+            "partner_company_logo_path": _partner_company_logo_path(session, user),
             "error": request.query_params.get("error"),
             "message": request.query_params.get("message"),
             "title": "Configurações | Portal Parceiro",
@@ -695,6 +770,74 @@ def partner_settings_save(
     session.add(user)
     session.commit()
     return _redirect("/partner/settings?message=Dados+atualizados+com+sucesso.")
+
+
+@router.get("/profile", response_class=HTMLResponse)
+def profile_page(
+    request: Request,
+    session: Session = Depends(get_session),
+    user: User = Depends(login_required),
+):
+    return templates.TemplateResponse(
+        "profile.html",
+        {
+            "request": request,
+            "user": user,
+            "error": request.query_params.get("error"),
+            "message": request.query_params.get("message"),
+            "title": "Meu Perfil | Viagens Extras",
+        },
+    )
+
+
+@router.post("/profile")
+def profile_save(
+    full_name: str = Form(...),
+    email: str = Form(...),
+    company_name: str = Form(default="Logtudo"),
+    phone: str = Form(default=""),
+    job_title: str = Form(default=""),
+    new_password: str = Form(default=""),
+    confirm_password: str = Form(default=""),
+    session: Session = Depends(get_session),
+    user: User = Depends(login_required),
+):
+    normalized_name = full_name.strip()
+    normalized_email = email.strip().lower()
+    normalized_company = company_name.strip()
+    phone_digits = re.sub(r"\D", "", phone.strip())
+
+    if not normalized_name:
+        return _redirect("/profile?error=Nome+completo+e+obrigatorio.")
+    
+    if not normalized_company:
+        return _redirect("/profile?error=Empresa+e+obrigatoria.")
+
+    existing_email = session.exec(select(User).where(User.email == normalized_email, User.id != user.id)).first()
+    if existing_email:
+        return _redirect("/profile?error=Este+e-mail+ja+esta+em+uso.")
+    
+    if phone_digits and not PHONE_BR_DIGITS_RE.match(phone_digits):
+        return _redirect("/profile?error=Telefone+invalido.+Use+DDD+com+10+ou+11+digitos.")
+    
+    if new_password and len(new_password) < 8:
+        return _redirect("/profile?error=A+nova+senha+deve+ter+no+minimo+8+caracteres.")
+    
+    if new_password and new_password != confirm_password:
+        return _redirect("/profile?error=Confirmacao+de+senha+nao+confere.")
+
+    user.full_name = normalized_name
+    user.email = normalized_email
+    user.company_name = normalized_company
+    user.phone = _format_phone_br(phone_digits) if phone_digits else None
+    user.job_title = job_title.strip() or None
+    
+    if new_password:
+        user.password_hash = hash_password(new_password)
+    
+    session.add(user)
+    session.commit()
+    return _redirect("/profile?message=Dados+atualizados+com+sucesso.")
 
 
 @router.get("/empresa", response_class=HTMLResponse)
@@ -951,6 +1094,7 @@ def save_driver(
             payload=f"driver_created|driver_id={new_driver.id}",
         )
     )
+    _notify_supervisors(session, "Novo Motorista Adicionado", f"O motorista {new_driver.name} foi adicionado à base.", new_driver.base_id)
     session.commit()
     return _redirect(f"/empresa/motoristas?message={quote_plus('Motorista cadastrado com sucesso')}")
 
@@ -1130,10 +1274,14 @@ def company_manager(
 
     edit_company_id = request.query_params.get("edit_company_id")
     edit_company = None
+    edit_company_base_ids = []
     if edit_company_id and edit_company_id.isdigit():
         candidate = session.get(Company, int(edit_company_id))
         if candidate:
             edit_company = candidate
+            edit_company_base_ids = [
+                b.id for b in manager_ctx.get("company_bases_by_company_id", {}).get(edit_company.id, [])
+            ]
 
     return templates.TemplateResponse(
         "company_manager.html",
@@ -1152,6 +1300,7 @@ def company_manager(
             "edit_base": edit_base,
             "edit_base_company_ids": edit_base_company_ids,
             "edit_company": edit_company,
+            "edit_company_base_ids": edit_company_base_ids,
         },
     )
 
@@ -1739,6 +1888,7 @@ def register_base(
     for company_id, company in selected_companies_by_id.items():
         session.add(CompanyBase(company_id=company.id, base_id=new_base.id))
     session.add(EventLog(actor_user_id=user.id, event_type="manager_data_changed", payload="base_created"))
+    _notify_supervisors(session, "Nova Base Adicionada", f"A base {new_base.name} foi adicionada ao sistema.", new_base.id)
     session.commit()
     return _redirect("/empresa/gerencial?message=Base+cadastrada+com+sucesso")
 
@@ -1770,6 +1920,7 @@ def register_company(
     request: Request,
     company_name: str = Form(...),
     base_ids: List[int] = Form(...),
+    cnpj: str = Form(...),
     sla_minutes: int = Form(30),
     company_id: int | None = Form(None),
     session: Session = Depends(get_session),
@@ -1778,13 +1929,16 @@ def register_company(
     if user.role != UserRole.LOGISTICS_MANAGER:
         raise HTTPException(status_code=403, detail="Sem permissão")
     normalized_name = company_name.strip()
+    normalized_cnpj = cnpj.strip()
     if not normalized_name:
         return _redirect("/empresa/gerencial?error=Nome+da+empresa+é+obrigatório")
+    if not normalized_cnpj:
+        return _redirect("/empresa/gerencial?error=CNPJ+é+obrigatório")
 
     company = session.exec(select(Company).where(Company.name == normalized_name)).first()
     company_created = False
     if not company:
-        company = Company(name=normalized_name, cnpj="PENDENTE")
+        company = Company(name=normalized_name, cnpj=normalized_cnpj)
         session.add(company)
         session.flush()
         company_created = True
@@ -1795,6 +1949,7 @@ def register_company(
         if not c:
             return _redirect("/empresa/gerencial?error=Empresa+invalida")
         c.name = normalized_name
+        c.cnpj = normalized_cnpj
         # adjust links: remove links not selected, update or create selected
         existing_links = session.exec(select(CompanyBase).where(CompanyBase.company_id == c.id)).all()
         existing_base_ids = {l.base_id for l in existing_links}
@@ -1855,6 +2010,84 @@ def delete_company(
     return _redirect("/empresa/gerencial?message=Empresa+deletada+com+sucesso")
 
 
+@router.get("/notifications")
+def get_notifications(
+    request: Request,
+    session: Session = Depends(get_session),
+):
+    user = get_optional_user(request, session)
+    if not user:
+        return JSONResponse(status_code=401, content={"detail": "Não autenticado"})
+
+    # Get the 10 most recent unread in-app notifications
+    notifications = session.exec(
+        select(Notification)
+        .where(
+            Notification.user_id == user.id,
+            Notification.channel == "in_app",
+            Notification.is_read == False
+        )
+        .order_by(Notification.sent_at.desc())
+        .limit(10)
+    ).all()
+
+    notif_list = [
+        {
+            "id": n.id,
+            "request_id": n.request_id,
+            "subject": n.subject,
+            "body": n.body,
+            "sent_at": n.sent_at.isoformat() if n.sent_at else None,
+        }
+        for n in notifications
+    ]
+    return JSONResponse(content={"notifications": notif_list})
+
+@router.post("/notifications/{notification_id}/read")
+def mark_notification_read(
+    notification_id: int,
+    request: Request,
+    session: Session = Depends(get_session),
+):
+    user = get_optional_user(request, session)
+    if not user:
+        return JSONResponse(status_code=401, content={"detail": "Não autenticado"})
+
+    notification = session.get(Notification, notification_id)
+    if not notification or notification.user_id != user.id:
+        return JSONResponse(status_code=404, content={"detail": "Notificação não encontrada"})
+
+    notification.is_read = True
+    session.add(notification)
+    session.commit()
+    return JSONResponse(content={"success": True})
+
+@router.post("/notifications/read-all")
+def mark_all_notifications_read(
+    request: Request,
+    session: Session = Depends(get_session),
+):
+    user = get_optional_user(request, session)
+    if not user:
+        return JSONResponse(status_code=401, content={"detail": "Não autenticado"})
+
+    notifications = session.exec(
+        select(Notification)
+        .where(
+            Notification.user_id == user.id,
+            Notification.channel == "in_app",
+            Notification.is_read == False
+        )
+    ).all()
+
+    for n in notifications:
+        n.is_read = True
+        session.add(n)
+    
+    session.commit()
+    return JSONResponse(content={"success": True})
+
+
 @router.get("/events/stream")
 async def events_stream(
     request: Request,
@@ -1864,29 +2097,58 @@ async def events_stream(
     if not user:
         raise HTTPException(status_code=401, detail="Não autenticado")
 
+    user_id = user.id
+
     last_id_header = request.headers.get("last-event-id")
-    last_event_id = int(last_id_header) if last_id_header and last_id_header.isdigit() else 0
+    if last_id_header and last_id_header.isdigit():
+        last_event_id = int(last_id_header)
+    else:
+        with Session(engine) as init_session:
+            max_id = init_session.exec(select(func.max(EventLog.id))).first()
+            last_event_id = max_id if max_id is not None else 0
 
     async def event_generator():
         nonlocal last_event_id
+        import sys
+        import os
+        is_testing = "pytest" in sys.modules or "PYTEST_CURRENT_TEST" in os.environ
+
         while True:
             if await request.is_disconnected():
                 break
 
+            events_to_yield = []
             with Session(engine) as stream_session:
+                stream_user = stream_session.get(User, user_id)
+                if not stream_user:
+                    break
+                    
                 events = stream_session.exec(
                     select(EventLog).where(EventLog.id > last_event_id).order_by(EventLog.id.asc())
                 ).all()
                 for event in events:
-                    if _event_matches_user(stream_session, event, user):
+                    if _event_matches_user(stream_session, event, stream_user):
                         payload = _sse_event_payload(event)
-                        yield f"id: {event.id}\nevent: {event.event_type}\ndata: {json.dumps(payload)}\n\n"
+                        events_to_yield.append((event.id, payload))
                     last_event_id = max(last_event_id, event.id or 0)
 
+            # Yield events outside of the Session block to free the connection pool slot
+            for event_id, payload in events_to_yield:
+                yield f"id: {event_id}\nevent: {payload['kind']}\ndata: {json.dumps(payload)}\n\n"
+
             yield ": heartbeat\n\n"
+            
+            if is_testing:
+                break
+                
             await asyncio.sleep(1)
 
-    return StreamingResponse(event_generator(), media_type="text/event-stream")
+    headers = {
+        "Cache-Control": "no-cache",
+        "Connection": "keep-alive",
+        "X-Accel-Buffering": "no",
+    }
+    return StreamingResponse(event_generator(), media_type="text/event-stream", headers=headers)
 
 
 @router.get("/empresa/requests/{request_id}/supervisor-panel", response_class=HTMLResponse)

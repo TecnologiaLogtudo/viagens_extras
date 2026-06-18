@@ -1,9 +1,8 @@
 <article id="partner-metrics" class="card">
   <h3>Resumo</h3>
-  <div class="metrics">
+  <div class="metrics" style="grid-template-columns: repeat(4, minmax(0, 1fr));">
     <div><span>Abertos</span><strong>{{ counts.open }}</strong></div>
     <div><span>Aguardando aceite</span><strong>{{ counts.pending_acceptance }}</strong></div>
-    <div><span>Em execução</span><strong>{{ counts.in_execution }}</strong></div>
     <div><span>Concluídos</span><strong>{{ counts.completed }}</strong></div>
     <div><span>Cancelados</span><strong>{{ counts.canceled }}</strong></div>
   </div>

@@ -214,13 +214,16 @@
       <label>Nome da Empresa
         <input name="company_name" value="{{ edit_company.name if edit_company else '' }}" required />
       </label>
+      <label>CNPJ
+        <input name="cnpj" value="{{ edit_company.cnpj if edit_company else '' }}" required placeholder="00.000.000/0001-00" />
+      </label>
       <label>SLA Contratual (minutos)
         <input type="number" name="sla_minutes" value="30" required />
       </label>
       <label class="full">Bases de Atuação (Segure Ctrl para selecionar várias)
         <select name="base_ids" multiple required style="min-height: 100px;">
           {% for b in bases %}
-          <option value="{{ b.id }}">{{ b.name }} ({{ b.location }})</option>
+          <option value="{{ b.id }}" {% if edit_company and b.id in edit_company_base_ids %}selected{% endif %}>{{ b.name }} ({{ b.location }})</option>
           {% endfor %}
         </select>
       </label>
@@ -257,6 +260,10 @@
       master.checked = checkedCount > 0 && checkedCount === children.length;
       master.indeterminate = checkedCount > 0 && checkedCount < children.length;
       master.setAttribute("aria-checked", master.indeterminate ? "mixed" : String(master.checked));
+      
+      if (checkedCount > 0 && group.tagName.toUpperCase() === 'DETAILS') {
+        group.open = true;
+      }
     };
 
     groups.forEach(function (group) {

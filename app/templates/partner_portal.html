@@ -14,7 +14,7 @@
     <form class="form-grid" method="post" action="/partner/requests/new">
       <label>Base
         <select name="base_id" required>
-          {% for base in bases.values() %}
+          {% for base in user.bases %}
           <option value="{{ base.id }}">{{ base.name }} - {{ base.location }}</option>
           {% endfor %}
         </select>

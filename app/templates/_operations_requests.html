@@ -1,103 +1,4 @@
 <section id="operations-requests" class="panel">
-  <h3>Solicitações operacionais</h3>
-  <div class="table-wrap">
-    <table>
-      <thead>
-        <tr><th>Protocolo</th><th>Solicitado em</th><th>Status</th><th>Base</th><th>SLA</th><th>Ações</th></tr>
-      </thead>
-      <tbody>
-      {% for req in travel_requests %}
-      {% set ratio, sla_color = sla_info.get(req.id, (0, 'green')) %}
-      {% set conf = confirmations.get(req.id) %}
-      <tr>
-        <td>{{ req.protocol }}</td>
-        <td>{{ req.created_at.strftime('%d/%m/%Y %H:%M') }}</td>
-        <td><span class="pill {{ req.status.value }}">{{ status_labels.get(req.id, req.status.value) }}</span></td>
-        <td>{{ bases[req.base_id].name }}</td>
-        <td><span class="pill {{ sla_color }}">{{ (ratio*100)|round(0) }}%</span></td>
-        <td>
-          <button hx-get="/empresa/requests/{{ req.id }}/supervisor-panel" hx-target="#supervisor-panel" hx-swap="outerHTML" type="button">Abrir painel</button>
-
-          {% if req.status.value in ['accepted', 'in_execution', 'completed'] or (req.status.value == 'confirmed' and req.request_type != 'Cotação de preço') %}
-          <a href="/requests/{{ req.id }}/comprovante" class="button-like download-btn" target="_blank" style="background: var(--success, #2ec4b6); color: white; padding: 0.4rem 0.6rem; text-decoration: none; border-radius: 4px; font-size: 0.85rem; display: inline-flex; align-items: center; gap: 0.3rem; margin-left: 0.4rem;">
-            <svg style="width: 14px; height: 14px; fill: currentColor;" viewBox="0 0 24 24"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></svg>
-            Comprovante
-          </a>
-          {% endif %}
-
-          {% if req.status.value != 'canceled' %}
-          <form method="post" action="/empresa/requests/{{ req.id }}/cancel" style="display: inline; margin-left: 0.4rem;" onsubmit="return confirm('Deseja realmente cancelar esta solicitação?');">
-            <button type="submit" class="button-like" style="background: var(--danger, #e63946); color: white; border: none; padding: 0.4rem 0.6rem; border-radius: 4px; font-size: 0.85rem; cursor: pointer;">Cancelar</button>
-          </form>
-          {% endif %}
-
-          {% if req.status.value in ['submitted','triage','completed'] %}
-          <details {% if req.status.value == 'completed' %}class="edit-mode"{% endif %}>
-            <summary>{% if req.status.value == 'completed' %}Editar Confirmação{% else %}Triagem{% endif %}</summary>
-            <div class="hint-box" style="margin: 0.5rem 0 1rem; border: 1px solid #d0e2ff; background: #f0f7ff; color: #002d70; padding: 0.8rem; border-radius: 8px;">
-              <div style="font-weight: 800; text-transform: uppercase; font-size: 0.7rem; margin-bottom: 0.4rem; opacity: 0.8;">Solicitação Original:</div>
-              <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.4rem; font-size: 0.85rem;">
-                <div><strong>Qtd:</strong> {{ req.quantity }}</div>
-                <div><strong>Veículo:</strong> {{ req.vehicle_type_requested }}</div>
-                <div class="full" style="grid-column: 1 / -1;"><strong>Data/Hora:</strong> {{ req.requested_datetime.strftime('%d/%m/%Y %H:%M') }}</div>
-                {% if req.reason %}<div class="full" style="grid-column: 1 / -1;"><strong>Motivo:</strong> {{ req.reason }}</div>{% endif %}
-                {% if req.notes %}<div class="full" style="grid-column: 1 / -1;"><strong>Notas:</strong> {{ req.notes }}</div>{% endif %}
-              </div>
-            </div>
-
-            <form class="form-grid" method="post" action="/empresa/requests/{{ req.id }}/triage">
-              <label>Decisão
-                <select name="decision_type" required>
-                  <option value="confirm" {% if conf and conf.decision_type.value == 'confirm' %}selected{% endif %}>Confirmar</option>
-                  <option value="partial" {% if conf and conf.decision_type.value == 'partial' %}selected{% endif %}>Parcial</option>
-                  <option value="alternative" {% if conf and conf.decision_type.value == 'alternative' %}selected{% endif %}>Alternativa</option>
-                  <option value="refuse" {% if conf and conf.decision_type.value == 'refuse' %}selected{% endif %}>Recusar</option>
-                </select>
-              </label>
-              <label>Qtd. Aprovada
-                <input type="number" name="approved_quantity" data-req-id="{{ req.id }}" value="{{ conf.approved_quantity if conf else req.quantity }}" min="1" required oninput="updateConfirmedVehiclesAndDrivers({{ req.id }})" />
-              </label>
-              <label>Data/Hora Confirmada
-                <input type="datetime-local" name="confirmed_datetime" value="{{ conf.confirmed_datetime.strftime('%Y-%m-%dT%H:%M') if conf else req.requested_datetime.strftime('%Y-%m-%dT%H:%M') }}" required />
-              </label>
-              <div id="confirmed-vehicles-drivers-container-{{ req.id }}" class="full" style="display: grid; grid-template-columns: 1fr; gap: 0.5rem;">
-                <!-- Dynamically generated selects go here -->
-              </div>
-              <script>
-                window['drivers_' + {{ req.id }}] = [
-                  {% for d in driver_rows %}
-                    {% if d.base_id == req.base_id %}
-                      {id: {{ d.id }}, name: {{ d.name | tojson }}, plate: {{ (d.vehicle.plate if d.vehicle else "") | tojson }}},
-                    {% endif %}
-                  {% endfor %}
-                ];
-                updateConfirmedVehiclesAndDrivers({{ req.id }}, '{{ conf.confirmed_vehicle_type if conf else req.vehicle_type_requested }}', '{{ conf.driver_ids if conf and conf.driver_ids else (conf.driver_id if conf and conf.driver_id else "") }}');
-              </script>
-              {% if req.request_type == 'Cotação de preço' %}
-              <label>Valor Tarifa (R$)
-                <input type="number" step="0.01" name="tariff_value" value="{{ conf.tariff_value if conf else '0.00' }}" required />
-              </label>
-              {% else %}
-              <input type="hidden" name="tariff_value" value="0.00" />
-              {% endif %}
-              <label>Observações
-                <input name="observations" value="{{ conf.observations if conf else '' }}" placeholder="observações para o parceiro" />
-              </label>
-              <label class="full">Motivo Recusa (se recusar)
-                <input name="refusal_reason" placeholder="obrigatório apenas se a decisão for 'Recusar'" />
-              </label>
-              <button class="full" type="submit">{% if req.status.value == 'completed' %}Salvar Alterações{% else %}Aplicar Triagem{% endif %}</button>
-            </form>
-          </details>
-          {% endif %}
-        </td>
-      </tr>
-      {% endfor %}
-      </tbody>
-    </table>
-  </div>
-</section>
-
 <script>
 function updateConfirmedVehiclesAndDrivers(reqId, defaultVehicleTypes, defaultDriverIds) {
   const container = document.getElementById('confirmed-vehicles-drivers-container-' + reqId);
@@ -201,3 +102,103 @@ function updateConfirmedVehiclesAndDrivers(reqId, defaultVehicleTypes, defaultDr
   }
 }
 </script>
+  <h3>Solicitações operacionais</h3>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr><th>Protocolo</th><th>Solicitado em</th><th>Status</th><th>Base</th><th>SLA</th><th>Ações</th></tr>
+      </thead>
+      <tbody>
+      {% for req in travel_requests %}
+      {% set ratio, sla_color = sla_info.get(req.id, (0, 'green')) %}
+      {% set conf = confirmations.get(req.id) %}
+      <tr>
+        <td>{{ req.protocol }}</td>
+        <td>{{ req.created_at | local_time }}</td>
+        <td><span class="pill {{ req.status.value }}">{{ status_labels.get(req.id, req.status.value) }}</span></td>
+        <td>{{ bases[req.base_id].name }}</td>
+        <td><span class="pill {{ sla_color }}">{{ (ratio*100)|round(0) }}%</span></td>
+        <td>
+          <button hx-get="/empresa/requests/{{ req.id }}/supervisor-panel" hx-target="#supervisor-panel" hx-swap="outerHTML" type="button">Abrir painel</button>
+
+          {% if req.status.value in ['accepted', 'in_execution', 'completed'] or (req.status.value == 'confirmed' and req.request_type != 'Cotação de preço') %}
+          <a href="/requests/{{ req.id }}/comprovante" class="button-like download-btn" target="_blank" style="background: var(--success, #2ec4b6); color: white; padding: 0.4rem 0.6rem; text-decoration: none; border-radius: 4px; font-size: 0.85rem; display: inline-flex; align-items: center; gap: 0.3rem; margin-left: 0.4rem;">
+            <svg style="width: 14px; height: 14px; fill: currentColor;" viewBox="0 0 24 24"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></svg>
+            Comprovante
+          </a>
+          {% endif %}
+
+          {% if req.status.value not in ['canceled', 'completed'] %}
+          <form method="post" action="/empresa/requests/{{ req.id }}/cancel" style="display: inline; margin-left: 0.4rem;" onsubmit="return confirm('Deseja realmente cancelar esta solicitação?');">
+            <button type="submit" class="button-like" style="background: var(--danger, #e63946); color: white; border: none; padding: 0.4rem 0.6rem; border-radius: 4px; font-size: 0.85rem; cursor: pointer;">Cancelar</button>
+          </form>
+          {% endif %}
+
+          {% if req.status.value in ['submitted','triage'] %}
+          <details>
+            <summary>Triagem</summary>
+            <div class="hint-box" style="margin: 0.5rem 0 1rem; border: 1px solid #d0e2ff; background: #f0f7ff; color: #002d70; padding: 0.8rem; border-radius: 8px;">
+              <div style="font-weight: 800; text-transform: uppercase; font-size: 0.7rem; margin-bottom: 0.4rem; opacity: 0.8;">Solicitação Original:</div>
+              <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.4rem; font-size: 0.85rem;">
+                <div class="full" style="grid-column: 1 / -1;"><strong>Tipo:</strong> {{ req.request_type }}</div>
+                <div><strong>Qtd:</strong> {{ req.quantity }}</div>
+                <div><strong>Veículo:</strong> {{ req.vehicle_type_requested }}</div>
+                <div class="full" style="grid-column: 1 / -1;"><strong>Origem / Destino:</strong> {{ req.origin }} &rarr; {{ req.destination }}</div>
+                <div class="full" style="grid-column: 1 / -1;"><strong>Data/Hora:</strong> {{ req.requested_datetime | local_time }}</div>
+                {% if req.reason %}<div class="full" style="grid-column: 1 / -1;"><strong>Motivo:</strong> {{ req.reason }}</div>{% endif %}
+                {% if req.notes %}<div class="full" style="grid-column: 1 / -1;"><strong>Notas:</strong> {{ req.notes }}</div>{% endif %}
+              </div>
+            </div>
+
+            <form class="form-grid" method="post" action="/empresa/requests/{{ req.id }}/triage">
+              <label>Decisão
+                <select name="decision_type" required>
+                  <option value="confirm" {% if conf and conf.decision_type.value == 'confirm' %}selected{% endif %}>Confirmar</option>
+                  <option value="partial" {% if conf and conf.decision_type.value == 'partial' %}selected{% endif %}>Parcial</option>
+                  <option value="alternative" {% if conf and conf.decision_type.value == 'alternative' %}selected{% endif %}>Alternativa</option>
+                  <option value="refuse" {% if conf and conf.decision_type.value == 'refuse' %}selected{% endif %}>Recusar</option>
+                </select>
+              </label>
+              <label>Qtd. Aprovada
+                <input type="number" name="approved_quantity" data-req-id="{{ req.id }}" value="{{ conf.approved_quantity if conf else req.quantity }}" min="1" required oninput="updateConfirmedVehiclesAndDrivers({{ req.id }})" />
+              </label>
+              <label>Data/Hora Confirmada
+                <input type="datetime-local" name="confirmed_datetime" value="{{ conf.confirmed_datetime | local_time_input if conf else req.requested_datetime | local_time_input }}" required />
+              </label>
+              <div id="confirmed-vehicles-drivers-container-{{ req.id }}" class="full" style="display: grid; grid-template-columns: 1fr; gap: 0.5rem;">
+                <!-- Dynamically generated selects go here -->
+              </div>
+              <script>
+                window['drivers_' + {{ req.id }}] = [
+                  {% for d in driver_rows %}
+                    {% if d.base_id == req.base_id %}
+                      {id: {{ d.id }}, name: {{ d.name | tojson }}, plate: {{ (d.vehicle.plate if d.vehicle else "") | tojson }}},
+                    {% endif %}
+                  {% endfor %}
+                ];
+                updateConfirmedVehiclesAndDrivers({{ req.id }}, '{{ conf.confirmed_vehicle_type if conf else req.vehicle_type_requested }}', '{{ conf.driver_ids if conf and conf.driver_ids else (conf.driver_id if conf and conf.driver_id else "") }}');
+              </script>
+              {% if req.request_type == 'Cotação de preço' %}
+              <label>Valor Tarifa (R$)
+                <input type="number" step="0.01" name="tariff_value" value="{{ conf.tariff_value if conf else '0.00' }}" required />
+              </label>
+              {% else %}
+              <input type="hidden" name="tariff_value" value="0.00" />
+              {% endif %}
+              <label>Observações
+                <input name="observations" value="{{ conf.observations if conf else '' }}" placeholder="observações para o parceiro" />
+              </label>
+              <label class="full">Motivo Recusa (se recusar)
+                <input name="refusal_reason" placeholder="obrigatório apenas se a decisão for 'Recusar'" />
+              </label>
+              <button class="full" type="submit">{% if req.status.value == 'completed' %}Salvar Alterações{% else %}Aplicar Triagem{% endif %}</button>
+            </form>
+          </details>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>

@@ -1,20 +1,73 @@
 <section id="partner-requests" class="panel">
   <h3>Minhas solicitações</h3>
+  
+<script>
+  function updateEditVehicleSelects(reqId, type, defaultVtsStr) {
+    const qtyInput = document.getElementById(type + '-qty-' + reqId);
+    const container = document.getElementById(type + '-vehicles-container-' + reqId);
+    if (!qtyInput || !container) return;
+    
+    let qty = parseInt(qtyInput.value) || 1;
+    if (qty < 1) qty = 1;
+    
+    container.innerHTML = '';
+    
+    let vtDefaults = [];
+    if (defaultVtsStr) {
+      vtDefaults = defaultVtsStr.split(',').map(s => s.trim().toLowerCase());
+    }
+    
+    const globalVehicleTypes = {{ vehicle_types | tojson }};
+    
+    for (let i = 0; i < qty; i++) {
+      const label = document.createElement('label');
+      label.style.fontSize = '0.7rem';
+      label.style.display = 'block';
+      label.style.width = '100%';
+      
+      const labelText = qty > 1 ? `Tipo do Veículo ${i + 1}` : 'Veículo';
+      label.innerHTML = `${labelText} *<br/>`;
+      
+      const select = document.createElement('select');
+      select.name = 'vehicle_type_requested';
+      select.required = true;
+      select.style.padding = '0.25rem';
+      select.style.fontSize = '0.75rem';
+      select.style.width = '100%';
+      select.style.borderRadius = '4px';
+      select.style.border = '1px solid #ccc';
+      
+      globalVehicleTypes.forEach(vt => {
+        const opt = document.createElement('option');
+        opt.value = vt.toLowerCase();
+        opt.textContent = vt;
+        if (vtDefaults[i] && vtDefaults[i] === vt.toLowerCase()) {
+          opt.selected = true;
+        } else if (!vtDefaults[i] && vt.toLowerCase() === 'sedan') {
+          opt.selected = true;
+        }
+        select.appendChild(opt);
+      });
+      
+      label.appendChild(select);
+      container.appendChild(label);
+    }
+  }
+</script>
+
   <div class="table-wrap">
     <table>
       <thead>
-        <tr><th>Protocolo</th><th>Solicitado em</th><th>Status</th><th>Base</th><th>SLA</th><th>Ações</th></tr>
+        <tr><th>Protocolo</th><th>Solicitado em</th><th>Status</th><th>Base</th><th>Ações</th></tr>
       </thead>
       <tbody>
       {% for req in travel_requests %}
-        {% set ratio, sla_color = sla_info.get(req.id, (0, 'green')) %}
         {% set conf = confirmations.get(req.id) %}
         <tr>
           <td>{{ req.protocol }}</td>
-          <td>{{ req.created_at.strftime('%d/%m/%Y %H:%M') }}</td>
+          <td>{{ req.created_at | local_time }}</td>
           <td><span class="pill {{ req.status.value }}">{{ status_labels.get(req.id, req.status.value) }}</span></td>
           <td>{{ bases[req.base_id].name }}</td>
-          <td><span class="pill {{ sla_color }}">{{ (ratio*100)|round(0) }}%</span></td>
           <td>
             <div class="actions-container">
               {% if conf %}
@@ -25,8 +78,10 @@
                     <div style="font-size: 0.85rem; margin: 0.4rem 0;">
                       • <strong>Qtd:</strong> {{ conf.approved_quantity }} (Solicitado: {{ req.quantity }})<br/>
                       • <strong>Veículo:</strong> {{ conf.confirmed_vehicle_type }}<br/>
-                      • <strong>Data/Hora:</strong> {{ conf.confirmed_datetime.strftime('%d/%m/%Y %H:%M') }}<br/>
+                      • <strong>Data/Hora:</strong> {{ conf.confirmed_datetime | local_time }}<br/>
+                      {% if req.request_type == 'Cotação de preço' %}
                       • <strong>Tarifa:</strong> R$ {{ "%.2f"|format(conf.tariff_value) }}<br/>
+                      {% endif %}
                       {% if conf.driver_ids %}
                         • <strong>Motoristas Alocados:</strong><br/>
                         {% set allocated_driver_ids = conf.driver_ids.split(', ') %}
@@ -52,7 +107,7 @@
                     <strong>Alterar Solicitação:</strong><br/>
                     <form class="form-grid" style="margin-top: 0.6rem;" method="post" action="/partner/requests/{{ req.id }}/propose-change">
                       <label style="font-size: 0.7rem;">Data/Hora
-                        <input type="datetime-local" name="requested_datetime" value="{{ req.requested_datetime.strftime('%Y-%m-%dT%H:%M') }}" required />
+                        <input type="datetime-local" name="requested_datetime" value="{{ req.requested_datetime | local_time_input }}" required />
                       </label>
                       <label style="font-size: 0.7rem;">Qtd
                         <input type="number" name="quantity" id="edit-qty-{{ req.id }}" value="{{ req.quantity }}" min="1" required oninput="updateEditVehicleSelects({{ req.id }}, 'edit')" />
@@ -112,56 +167,3 @@
   </div>
 </section>
 
-<script>
-  function updateEditVehicleSelects(reqId, type, defaultVtsStr) {
-    const qtyInput = document.getElementById(type + '-qty-' + reqId);
-    const container = document.getElementById(type + '-vehicles-container-' + reqId);
-    if (!qtyInput || !container) return;
-    
-    let qty = parseInt(qtyInput.value) || 1;
-    if (qty < 1) qty = 1;
-    
-    container.innerHTML = '';
-    
-    let vtDefaults = [];
-    if (defaultVtsStr) {
-      vtDefaults = defaultVtsStr.split(',').map(s => s.trim().toLowerCase());
-    }
-    
-    const globalVehicleTypes = {{ vehicle_types | tojson }};
-    
-    for (let i = 0; i < qty; i++) {
-      const label = document.createElement('label');
-      label.style.fontSize = '0.7rem';
-      label.style.display = 'block';
-      label.style.width = '100%';
-      
-      const labelText = qty > 1 ? `Tipo do Veículo ${i + 1}` : 'Veículo';
-      label.innerHTML = `${labelText} *<br/>`;
-      
-      const select = document.createElement('select');
-      select.name = 'vehicle_type_requested';
-      select.required = true;
-      select.style.padding = '0.25rem';
-      select.style.fontSize = '0.75rem';
-      select.style.width = '100%';
-      select.style.borderRadius = '4px';
-      select.style.border = '1px solid #ccc';
-      
-      globalVehicleTypes.forEach(vt => {
-        const opt = document.createElement('option');
-        opt.value = vt.toLowerCase();
-        opt.textContent = vt;
-        if (vtDefaults[i] && vtDefaults[i] === vt.toLowerCase()) {
-          opt.selected = true;
-        } else if (!vtDefaults[i] && vt.toLowerCase() === 'sedan') {
-          opt.selected = true;
-        }
-        select.appendChild(opt);
-      });
-      
-      label.appendChild(select);
-      container.appendChild(label);
-    }
-  }
-</script>

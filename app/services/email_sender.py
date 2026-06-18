@@ -59,7 +59,13 @@ def load_smtp_settings_from_env() -> SMTPSettings:
     )
 
 
-def send_email(to_email: str, subject: str, body: str, timeout_seconds: int = 10) -> None:
+def send_email(
+    to_email: str,
+    subject: str,
+    body: str,
+    timeout_seconds: int = 10,
+    attachment_path: str | None = None,
+) -> None:
     settings = load_smtp_settings_from_env()
 
     message = EmailMessage()
@@ -67,6 +73,21 @@ def send_email(to_email: str, subject: str, body: str, timeout_seconds: int = 10
     message["To"] = to_email
     message["Subject"] = subject
     message.set_content(body)
+
+    if attachment_path and os.path.exists(attachment_path):
+        import mimetypes
+        ctype, encoding = mimetypes.guess_type(attachment_path)
+        if ctype is None or encoding is not None:
+            ctype = "application/octet-stream"
+        maintype, subtype = ctype.split("/", 1)
+        with open(attachment_path, "rb") as fp:
+            file_data = fp.read()
+        message.add_attachment(
+            file_data,
+            maintype=maintype,
+            subtype=subtype,
+            filename=os.path.basename(attachment_path),
+        )
 
     try:
         use_ssl = settings.use_ssl or settings.port == 465

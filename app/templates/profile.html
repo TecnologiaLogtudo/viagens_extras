@@ -1,0 +1,74 @@
+{% extends 'base.html' %}
+{% block content %}
+<section class="hero">
+  <h2>Configurações do Perfil</h2>
+  <p>Atualize suas informações pessoais de contato e atuação profissional.</p>
+</section>
+
+<section class="panel">
+  <article class="card">
+    {% if error %}
+    <p class="error-text">{{ error }}</p>
+    {% endif %}
+    {% if message %}
+    <p class="pill green">{{ message }}</p>
+    {% endif %}
+
+    <form method="post" action="/profile" class="form-grid">
+      <label>Nome completo
+        <input name="full_name" required value="{{ user.full_name or '' }}" />
+      </label>
+      <label>E-mail
+        <input type="email" name="email" required value="{{ user.email or '' }}" />
+      </label>
+      <label>Empresa
+        <input name="company_name" required value="{{ user.company_name or '' }}" />
+      </label>
+      <label>Telefone
+        <input id="phone" name="phone" value="{{ user.phone or '' }}" placeholder="71 99876-5213" />
+      </label>
+      <label>Cargo
+        <input name="job_title" value="{{ user.job_title or '' }}" />
+      </label>
+      <label>Nova senha
+        <div class="password-wrapper">
+          <input type="password" name="new_password" minlength="8" placeholder="Opcional" />
+          <button type="button" class="password-toggle" aria-label="Mostrar senha"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg></button>
+        </div>
+      </label>
+      <label>Confirmar nova senha
+        <div class="password-wrapper">
+          <input type="password" name="confirm_password" minlength="8" placeholder="Repita a nova senha" />
+          <button type="button" class="password-toggle" aria-label="Mostrar senha"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg></button>
+        </div>
+      </label>
+      <div class="full inline-row">
+        <button type="submit">Salvar alterações</button>
+        {% if user.role.value == 'logistics_manager' %}
+          <a class="button-like" href="/empresa/gerencial">Voltar</a>
+        {% elif user.role.value == 'base_supervisor' %}
+          <a class="button-like" href="/empresa/operacoes">Voltar</a>
+        {% else %}
+          <a class="button-like" href="/empresa">Voltar</a>
+        {% endif %}
+      </div>
+    </form>
+  </article>
+</section>
+<script>
+  (function () {
+    const phoneInput = document.getElementById("phone");
+    if (!phoneInput) return;
+    function formatPhone(value) {
+      const digits = value.replace(/\D/g, "").slice(0, 11);
+      if (digits.length <= 2) return digits;
+      if (digits.length <= 6) return `${digits.slice(0, 2)} ${digits.slice(2)}`;
+      if (digits.length <= 10) return `${digits.slice(0, 2)} ${digits.slice(2, 6)}-${digits.slice(6)}`;
+      return `${digits.slice(0, 2)} ${digits.slice(2, 7)}-${digits.slice(7)}`;
+    }
+    phoneInput.addEventListener("input", function () {
+      phoneInput.value = formatPhone(phoneInput.value);
+    });
+  })();
+</script>
+{% endblock %}

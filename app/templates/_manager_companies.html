@@ -2,7 +2,7 @@
   {% for c in companies %}
   <details>
     <summary>
-      <strong>{{ c.name }}</strong> — Bases atendidas
+      <strong>{{ c.name }}</strong> {% if c.cnpj %}<span style="color:#666; font-size:0.9em; margin-left:5px;">(CNPJ: {{ c.cnpj }})</span>{% endif %} — Bases atendidas
       <span style="float: right;">
         <a href="/empresa/gerencial?edit_company_id={{ c.id }}" title="Editar empresa" aria-label="Editar empresa">
           <!-- pencil icon -->

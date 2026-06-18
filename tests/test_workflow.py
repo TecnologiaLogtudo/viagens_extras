@@ -174,8 +174,8 @@ def test_cancel_allowed_for_confirmed_by_supervisor(session, monkeypatch):
     )
     req = session.get(type(req), req.id)
     assert can_partner_cancel_request(session, req) is False
-    canceled = cancel_request(session, sup, req)
-    assert canceled.status == RequestStatus.CANCELED
+    with pytest.raises(DomainError, match="Não é possível cancelar uma viagem já concluída"):
+        cancel_request(session, sup, req)
 
 
 def test_partner_cancel_always_blocked(session):
@@ -410,6 +410,158 @@ def test_quote_triage_flow(session, monkeypatch):
     from app.models import Document
     doc = session.exec(select(Document).where(Document.request_id == req.id)).first()
     assert doc is None
+
+
+def test_cancel_request_sends_email(session, monkeypatch):
+    req = _mk_request(session)
+    sup = session.exec(select(User).where(User.role == UserRole.BASE_SUPERVISOR)).first()
+
+    sent_emails = []
+    def mock_send_email(to_email, subject, body, attachment_path=None):
+        sent_emails.append({
+            "to_email": to_email,
+            "subject": subject,
+            "body": body,
+            "attachment_path": attachment_path
+        })
+    monkeypatch.setattr("app.services.workflow.send_email", mock_send_email)
+
+    cancel_request(session, sup, req, reason="Falta de motorista disponível")
+
+    assert len(sent_emails) == 2
+    cancel_email_partner = sent_emails[0]
+    assert "cancelada" in cancel_email_partner["subject"].lower()
+    assert "Falta de motorista disponível" in cancel_email_partner["body"]
+    assert cancel_email_partner["attachment_path"] is None
+
+
+def test_complete_trip_sends_email_with_pdf(session, monkeypatch):
+    req = _mk_request(session)
+    sup = session.exec(select(User).where(User.role == UserRole.BASE_SUPERVISOR)).first()
+    
+    # Manually transition req status to IN_EXECUTION and create Dispatch row for testing complete_trip
+    req.status = RequestStatus.IN_EXECUTION
+    session.add(req)
+    
+    from app.models import Dispatch, Driver, Vehicle
+    driver = session.exec(select(Driver)).first()
+    vehicle = session.exec(select(Vehicle)).first()
+    dispatch = Dispatch(
+        request_id=req.id,
+        driver_id=driver.id,
+        vehicle_id=vehicle.id,
+        planned_departure_at=datetime.now(timezone.utc),
+    )
+    session.add(dispatch)
+    session.commit()
+
+    sent_emails = []
+    def mock_send_email(to_email, subject, body, attachment_path=None):
+        sent_emails.append({
+            "to_email": to_email,
+            "subject": subject,
+            "body": body,
+            "attachment_path": attachment_path
+        })
+    monkeypatch.setattr("app.services.workflow.send_email", mock_send_email)
+
+    complete_trip(
+        session,
+        sup,
+        req,
+        actual_departure_at=datetime.now(timezone.utc),
+        actual_arrival_at=datetime.now(timezone.utc),
+        occurrences="Sem intercorrências",
+    )
+
+    assert len(sent_emails) == 1
+    comp_email = sent_emails[0]
+    assert "Pedido" in comp_email["subject"]
+    assert "concluído com sucesso" in comp_email["subject"]
+    assert comp_email["attachment_path"] is not None
+    assert comp_email["attachment_path"].endswith(f"{req.protocol}.pdf")
+
+
+def test_create_request_notifications_for_all_profiles(session, monkeypatch):
+    _mock_email_delivery(monkeypatch)
+    from app.models import Notification, NotificationType
+    
+    # Clean existing notifications
+    for notif in session.exec(select(Notification)).all():
+        session.delete(notif)
+    session.commit()
+    
+    base = session.exec(select(Base)).first()
+    partner = session.exec(select(User).where(User.role == UserRole.PARTNER_REQUESTER)).first()
+    
+    # Ensure there is an active logistics manager
+    mgr = User(full_name="M", email="m@test", role=UserRole.LOGISTICS_MANAGER, is_active=True)
+    session.add(mgr)
+    
+    # Ensure supervisor is active and has access
+    sup = session.exec(select(User).where(User.role == UserRole.BASE_SUPERVISOR)).first()
+    sup.is_active = True
+    session.add(sup)
+    session.commit()
+    
+    # 1. Create a "Viagem extra" request
+    payload_extra = TravelRequestCreate(
+        base_id=base.id,
+        request_type="Viagem extra",
+        requested_datetime=datetime(2030, 1, 2, 10, 0, tzinfo=timezone.utc),
+        origin="A",
+        destination="B",
+        quantity=1,
+        vehicle_type_requested="sedan",
+        cost_center="CC",
+        reason="motivo",
+    )
+    req_extra = create_request(session, partner, payload_extra)
+    
+    # Verify notifications for req_extra
+    notifs_extra = session.exec(
+        select(Notification)
+        .where(Notification.request_id == req_extra.id)
+    ).all()
+    
+    # Both supervisor (id=sup.id) and manager (id=mgr.id) should have notifications
+    sup_notifs = [n for n in notifs_extra if n.user_id == sup.id]
+    mgr_notifs = [n for n in notifs_extra if n.user_id == mgr.id]
+    
+    assert len(sup_notifs) > 0
+    assert len(mgr_notifs) > 0
+    # Check that in-app notification exists for both
+    assert any(n.channel == "in_app" for n in sup_notifs)
+    assert any(n.channel == "in_app" for n in mgr_notifs)
+    
+    # 2. Create a "Cotação de preço" request
+    payload_quote = TravelRequestCreate(
+        base_id=base.id,
+        request_type="Cotação de preço",
+        requested_datetime=datetime(2030, 1, 3, 10, 0, tzinfo=timezone.utc),
+        origin="A",
+        destination="B",
+        quantity=1,
+        vehicle_type_requested="sedan",
+        cost_center="CC",
+        reason="motivo",
+    )
+    req_quote = create_request(session, partner, payload_quote)
+    
+    # Verify notifications for req_quote
+    notifs_quote = session.exec(
+        select(Notification)
+        .where(Notification.request_id == req_quote.id)
+    ).all()
+    
+    sup_quote_notifs = [n for n in notifs_quote if n.user_id == sup.id]
+    mgr_quote_notifs = [n for n in notifs_quote if n.user_id == mgr.id]
+    
+    assert len(sup_quote_notifs) > 0
+    assert len(mgr_quote_notifs) > 0
+    assert any(n.channel == "in_app" for n in sup_quote_notifs)
+    assert any(n.channel == "in_app" for n in mgr_quote_notifs)
+
 
 
 

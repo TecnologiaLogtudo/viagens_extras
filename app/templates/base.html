@@ -18,9 +18,24 @@
         <p class="kicker">Central Logtudo</p>
         <h1>Viagens Extras</h1>
       </div>
-      <div class="meta">
+      <div class="meta" style="align-items: center;">
         <span>{{ user.full_name }}</span>
         <span>{% if user.role.value == 'partner_requester' %}{{ user.company_name }}{% else %}{{ user.role.value }}{% endif %}</span>
+        <div class="notifications-dropdown-container">
+          <button type="button" id="notif-bell-btn" class="button-like notif-bell" aria-label="Notificações">
+            <svg viewBox="0 0 24 24" width="20" height="20" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round" class="css-i6dzq1"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"></path><path d="M13.73 21a2 2 0 0 1-3.46 0"></path></svg>
+            <span id="notif-badge" class="notif-badge hidden">0</span>
+          </button>
+          <div id="notif-dropdown" class="notif-dropdown hidden">
+            <div class="notif-header">
+              <h4>Notificações</h4>
+              <button type="button" id="notif-read-all" class="text-button">Marcar todas como lidas</button>
+            </div>
+            <div id="notif-list" class="notif-list">
+              <!-- Notifications will be injected here via JS -->
+            </div>
+          </div>
+        </div>
       </div>
     </header>
 
@@ -63,6 +78,96 @@
       if (!window.EventSource || !window.htmx) return;
 
       const role = "{{ user.role.value if user else '' }}";
+      const bellBtn = document.getElementById('notif-bell-btn');
+      const dropdown = document.getElementById('notif-dropdown');
+      const badge = document.getElementById('notif-badge');
+      const list = document.getElementById('notif-list');
+      const readAllBtn = document.getElementById('notif-read-all');
+
+      function loadNotifications() {
+        if (!bellBtn) return;
+        fetch('/notifications')
+          .then(res => res.json())
+          .then(data => {
+            const notifs = data.notifications || [];
+            badge.textContent = notifs.length;
+            if (notifs.length > 0) {
+              badge.classList.remove('hidden');
+            } else {
+              badge.classList.add('hidden');
+            }
+            
+            list.innerHTML = '';
+            if(notifs.length === 0) {
+              list.innerHTML = '<p class="muted" style="padding: 1rem; text-align: center; margin: 0;">Nenhuma notificação nova.</p>';
+            } else {
+              notifs.forEach(n => {
+                const div = document.createElement('div');
+                div.className = 'notif-item';
+                div.innerHTML = `
+                  <strong>${n.subject}</strong>
+                  <p>${n.body}</p>
+                  <div class="notif-meta">
+                    <span>${n.sent_at ? new Date(n.sent_at).toLocaleString() : ''}</span>
+                    <button type="button" class="text-button mark-read-btn" data-id="${n.id}">Marcar como lida</button>
+                  </div>
+                `;
+                list.appendChild(div);
+              });
+
+              document.querySelectorAll('.mark-read-btn').forEach(btn => {
+                btn.addEventListener('click', (e) => {
+                  e.stopPropagation();
+                  const id = btn.getAttribute('data-id');
+                  fetch(`/notifications/${id}/read`, { method: 'POST' })
+                    .then(() => loadNotifications());
+                });
+              });
+            }
+          });
+      }
+
+      if (bellBtn) {
+        bellBtn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          const isClosed = dropdown.classList.contains('hidden');
+          if (isClosed) {
+            dropdown.classList.remove('hidden');
+            dropdown.offsetHeight; // Force reflow
+            dropdown.classList.add('show');
+            loadNotifications();
+          } else {
+            dropdown.classList.remove('show');
+            setTimeout(() => {
+              if (!dropdown.classList.contains('show')) {
+                dropdown.classList.add('hidden');
+              }
+            }, 250);
+          }
+        });
+
+        readAllBtn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          fetch('/notifications/read-all', { method: 'POST' })
+            .then(() => loadNotifications());
+        });
+
+        document.addEventListener('click', (e) => {
+          if (!dropdown.contains(e.target) && !bellBtn.contains(e.target)) {
+            if (!dropdown.classList.contains('hidden')) {
+              dropdown.classList.remove('show');
+              setTimeout(() => {
+                if (!dropdown.classList.contains('show')) {
+                  dropdown.classList.add('hidden');
+                }
+              }, 250);
+            }
+          }
+        });
+
+        // Load initially
+        loadNotifications();
+      }
       const refreshTimers = {};
       const activeSupervisorPanel = function () {
         const panel = document.querySelector("#supervisor-panel [data-selected-request-id]");
@@ -78,6 +183,7 @@
       };
 
       const onRequestChanged = function () {
+        if (typeof loadNotifications === "function") loadNotifications();
         if (role === "partner_requester") {
           queueRefresh("#partner-metrics", "/partner/fragments/metrics");
           queueRefresh("#partner-requests", "/partner/fragments/requests");
@@ -95,6 +201,7 @@
       };
 
       const onDriverChanged = function () {
+        if (typeof loadNotifications === "function") loadNotifications();
         if (role !== "base_supervisor" && role !== "logistics_manager") return;
         queueRefresh("#operations-requests", "/empresa/operacoes/fragments/requests");
         queueRefresh("#drivers-list", "/empresa/motoristas/fragments/list");
@@ -106,6 +213,7 @@
       };
 
       const onManagerChanged = function () {
+        if (typeof loadNotifications === "function") loadNotifications();
         if (role === "logistics_manager") {
           queueRefresh("#manager-supervisors", "/empresa/gerencial/fragments/supervisors");
           queueRefresh("#manager-partners", "/empresa/gerencial/fragments/partners");

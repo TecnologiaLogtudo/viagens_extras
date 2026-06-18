@@ -81,6 +81,11 @@ def init_db() -> None:
             if "contract_sla_minutes" not in cb_col_names:
                 conn.execute(text("ALTER TABLE companybase ADD COLUMN contract_sla_minutes INTEGER"))
 
+            company_cols = conn.execute(text("PRAGMA table_info(company)")).fetchall()
+            company_col_names = {c[1] for c in company_cols}
+            if "logo_path" not in company_col_names:
+                conn.execute(text("ALTER TABLE company ADD COLUMN logo_path TEXT"))
+
             conf_cols = conn.execute(text("PRAGMA table_info(operationalconfirmation)")).fetchall()
             conf_col_names = {c[1] for c in conf_cols}
             if "driver_id" not in conf_col_names:
