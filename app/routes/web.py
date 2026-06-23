@@ -1,3 +1,4 @@
+import os
 import re
 import json
 import asyncio
@@ -101,6 +102,7 @@ from zoneinfo import ZoneInfo
 
 router = APIRouter()
 templates = Jinja2Templates(directory="app/templates")
+templates.env.globals["ROOT_PATH"] = os.getenv("ROOT_PATH", "").rstrip("/")
 
 def _to_local_time(dt: datetime | None, format: str = "%d/%m/%Y %H:%M") -> str:
     if not dt:

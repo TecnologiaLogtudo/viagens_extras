@@ -30,7 +30,14 @@ body.company-internal {
   background-attachment: fixed;
 }
 
-body.company-internal .bg-glow {
+body.partner-portal {
+  background: url('../imagens/textura1.png');
+  background-size: contain;
+  background-attachment: fixed;
+}
+
+body.company-internal .bg-glow,
+body.partner-portal .bg-glow {
   display: none;
 }
 

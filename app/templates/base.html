@@ -10,13 +10,22 @@
   <link rel="stylesheet" href="/static/css/app.css" />
   <script src="https://unpkg.com/htmx.org@1.9.12"></script>
 </head>
-<body class="{% if user.role.value in ['base_supervisor', 'logistics_manager'] %}company-internal{% endif %}">
+<body class="{% if user.role.value in ['base_supervisor', 'logistics_manager', 'finance_readonly'] %}company-internal{% elif user.role.value == 'partner_requester' %}partner-portal{% endif %}">
   <div class="bg-glow"></div>
   <main class="shell">
     <header class="topbar">
-      <div>
-        <p class="kicker">Central Logtudo</p>
-        <h1>Viagens Extras</h1>
+      <div class="brand-container">
+        <div class="logo-group">
+          <img src="{{ ROOT_PATH }}/static/imagens/Logo02.png" alt="Logtudo" class="header-logo">
+          {% if partner_company_logo_path %}
+            <div class="logo-divider"></div>
+            <img src="{{ ROOT_PATH }}{{ partner_company_logo_path }}" alt="Logo Parceiro" class="header-logo">
+          {% endif %}
+        </div>
+        <div class="brand-text">
+          <p class="kicker">Central Logtudo</p>
+          <h1>Viagens Extras</h1>
+        </div>
       </div>
       <div class="meta" style="align-items: center;">
         <span>
