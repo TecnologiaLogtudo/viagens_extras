@@ -7,7 +7,7 @@ services:
     restart: unless-stopped
     environment:
       - TZ=${TZ:-America/Sao_Paulo}
-      - DATABASE_URL=${DATABASE_URL:-postgresql://postgres:postgres@db:5432/logtudo}
+      - DATABASE_URL=postgresql://postgres:postgres@db:5432/logtudo
       - SESSION_SECRET_KEY=${SESSION_SECRET_KEY:-logtudo-viagens-extras-secret-key-change-me}
       - ROOT_PATH=${ROOT_PATH:-/viagens_extras}
     volumes:
