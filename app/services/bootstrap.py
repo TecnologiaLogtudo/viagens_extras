@@ -191,7 +191,18 @@ def seed_default_users(session: Session) -> None:
     session.commit()
 
 
+def ensure_company_logos(session: Session) -> None:
+    """Ensure that known companies have their logo paths set in the database."""
+    latam = session.exec(select(Company).where(Company.name == "Latam")).first()
+    if latam and not latam.logo_path:
+        latam.logo_path = "/static/imagens/latam.png"
+        session.add(latam)
+        session.commit()
+        print("✅ Caminho do logo da Latam atualizado no banco de dados!")
+
+
 def seed_runtime_data(session: Session) -> None:
     seed_catalog_from_workbook(session)
     seed_default_users(session)
     migrate_supervisor_company_base_links(session)
+    ensure_company_logos(session)

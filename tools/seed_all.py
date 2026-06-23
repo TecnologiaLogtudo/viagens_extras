@@ -25,6 +25,7 @@ def run_seeds() -> None:
     init_db_with_seeds()
 
     # Aplica catálogo de bases operacionais e usuários padrão
+    from app.services.bootstrap import ensure_company_logos
     with Session(engine) as session:
         if not is_database_seeded(session):
             print("🌱 Populando catálogo de bases operacionais e usuários padrão...")
@@ -32,6 +33,7 @@ def run_seeds() -> None:
             print("✅ Catálogo e usuários padrão criados com sucesso!")
         else:
             print("⏭️ Catálogo e usuários padrão já existem no banco. Pulando...")
+            ensure_company_logos(session)
 
     print("🚀 Processo de carga manual de seeds finalizado com sucesso!")
 
