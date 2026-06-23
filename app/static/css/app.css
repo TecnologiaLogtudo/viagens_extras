@@ -25,7 +25,7 @@ body {
 }
 
 body.company-internal {
-  background: url('/static/imagens/textura3.png');
+  background: url('../imagens/textura3.png');
   background-size: contain;
   background-attachment: fixed;
 }
