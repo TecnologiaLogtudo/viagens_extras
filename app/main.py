@@ -72,7 +72,7 @@ app.add_middleware(
     same_site="lax",
     https_only=False,
 )
-app.mount("/static", StaticFiles(directory="app/static"), name="static")
+app.mount("/static", StaticFiles(directory=os.path.join(os.path.dirname(__file__), "static")), name="static")
 app.include_router(web_router)
 
 
