@@ -1,0 +1,93 @@
+<div id="logs-table-container" class="table-wrap">
+  <!-- OOB KPI Swaps -->
+  <strong id="kpi-total-requests" hx-swap-oob="true">{{ kpis.total_requests }}</strong>
+  <strong id="kpi-triage-actions" hx-swap-oob="true">{{ kpis.triage_actions }}</strong>
+  <strong id="kpi-canceled-trips" hx-swap-oob="true">{{ kpis.canceled_trips }}</strong>
+  <strong id="kpi-alerts" hx-swap-oob="true">{{ kpis.alerts }}</strong>
+
+  <table>
+    <thead>
+      <tr>
+        <th style="width: 15%;">Data/Hora</th>
+        <th style="width: 20%;">Autor</th>
+        <th style="width: 15%;">Categoria</th>
+        <th>Descrição</th>
+        <th style="width: 12%;">Protocolo</th>
+        <th style="width: 10%; text-align: center;">Ações</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in log_rows %}
+      <tr>
+        <td style="white-space: nowrap;">{{ row.created_at | local_time('%d/%m/%Y %H:%M:%S') }}</td>
+        <td>
+          {% if row.actor_name %}
+            <strong>{{ row.actor_name }}</strong>
+            {% if row.actor_role %}
+              <br/><small class="muted" style="font-size: 0.72rem; font-weight: 500;">{{ row.actor_role }}</small>
+            {% endif %}
+          {% else %}
+            <span class="muted">Sistema</span>
+          {% endif %}
+        </td>
+        <td>
+          <span class="pill {{ row.category_class }}">{{ row.category }}</span>
+        </td>
+        <td>{{ row.description }}</td>
+        <td>
+          {% if row.protocol %}
+            <a href="/empresa/operacoes?selected_request_id={{ row.request_id }}" style="font-weight: 700; color: var(--accent);">{{ row.protocol }}</a>
+          {% else %}
+            <span class="muted">—</span>
+          {% endif %}
+        </td>
+        <td style="text-align: center;">
+          {% if row.payload %}
+            <button type="button" class="pill" data-payload="{{ row.payload | forceescape }}" onclick="showLogDetails(this)" style="border: 1px solid var(--line); background: #fff; color: var(--ink); cursor: pointer;">JSON</button>
+          {% else %}
+            <span class="muted">—</span>
+          {% endif %}
+        </td>
+      </tr>
+      {% else %}
+      <tr>
+        <td colspan="6" class="muted" style="text-align: center; padding: 2rem 1rem;">Nenhum log encontrado para os filtros selecionados.</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+
+  <!-- Pagination -->
+  {% if total_pages and total_pages > 1 %}
+  <div class="pagination-row" style="display: flex; justify-content: space-between; align-items: center; margin-top: 1rem; flex-wrap: wrap; gap: 0.75rem;">
+    <span style="font-size: 0.75rem; font-weight: 700; color: var(--muted);">Página {{ page }} de {{ total_pages }}</span>
+    <div style="display: inline-flex; align-items: center; gap: 0.5rem; margin-left: auto;">
+      {% if page > 1 %}
+      <button type="button" 
+              hx-get="/empresa/logs/fragments/list?page={{ page - 1 }}&company_id={{ selected_company_id or '' }}&search={{ search or '' }}" 
+              hx-target="#logs-table-container" 
+              hx-swap="outerHTML" 
+              class="pill" 
+              style="border: 1px solid var(--line); background: #fff; cursor: pointer; color: var(--ink); font-weight:700;">
+        &laquo; Anterior
+      </button>
+      {% else %}
+      <span class="pill muted" style="border: 1px solid transparent; opacity: 0.5; font-weight:700;">&laquo; Anterior</span>
+      {% endif %}
+
+      {% if page < total_pages %}
+      <button type="button" 
+              hx-get="/empresa/logs/fragments/list?page={{ page + 1 }}&company_id={{ selected_company_id or '' }}&search={{ search or '' }}" 
+              hx-target="#logs-table-container" 
+              hx-swap="outerHTML" 
+              class="pill" 
+              style="border: 1px solid var(--line); background: #fff; cursor: pointer; color: var(--ink); font-weight:700;">
+        Próxima &raquo;
+      </button>
+      {% else %}
+      <span class="pill muted" style="border: 1px solid transparent; opacity: 0.5; font-weight:700;">Próxima &raquo;</span>
+      {% endif %}
+    </div>
+  </div>
+  {% endif %}
+</div>

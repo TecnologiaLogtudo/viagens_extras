@@ -1315,6 +1315,264 @@ def company_manager(
     )
 
 
+def format_event_log(event: EventLog, actor: User | None, request: TravelRequest | None) -> dict:
+    actor_name = actor.full_name if actor else None
+    actor_role = actor.role.value if actor else None
+    
+    role_translations = {
+        "logistics_manager": "Gerente",
+        "base_supervisor": "Supervisor",
+        "partner_requester": "Parceiro",
+        "finance_readonly": "Financeiro",
+    }
+    if actor_role in role_translations:
+        actor_role = role_translations[actor_role]
+        
+    event_type = event.event_type
+    payload = event.payload
+    
+    category = "Viagem"
+    category_class = "log-travel"
+    description = f"Ação no sistema ({event_type})"
+    
+    if event_type == "request_submitted":
+        description = "Nova solicitação de viagem criada."
+    elif event_type == "request_confirmed":
+        decision = "confirmada"
+        if payload == "partial":
+            decision = "confirmada parcialmente"
+        elif payload == "alternative":
+            decision = "confirmada com alternativa"
+        elif payload == "refuse":
+            decision = "recusada"
+        description = f"Triagem realizada pelo Supervisor: solicitação {decision}."
+    elif event_type == "request_refused":
+        description = f"Solicitação recusada na triagem. Motivo: {payload}"
+        category = "Alerta"
+        category_class = "log-alert"
+    elif event_type == "request_modified_by_partner":
+        description = "Solicitação modificada pelo parceiro (triagem reiniciada)."
+        category = "Alerta"
+        category_class = "log-alert"
+    elif event_type == "acceptance_signed":
+        description = "Termo de aceite assinado eletronicamente pelo parceiro."
+    elif event_type == "request_canceled":
+        description = f"Solicitação de viagem cancelada. Motivo: {payload}"
+        category = "Alerta"
+        category_class = "log-alert"
+    elif event_type == "trip_completed":
+        description = "Viagem finalizada com sucesso."
+    elif event_type == "manager_data_changed":
+        category = "Gerencial"
+        category_class = "log-manager"
+        if "supervisor_updated" in payload:
+            description = "Cadastro de supervisor atualizado."
+        elif "supervisor_created" in payload:
+            description = "Novo supervisor cadastrado."
+        elif "supervisor_deleted" in payload:
+            description = "Supervisor removido."
+        elif "partner_updated" in payload:
+            description = "Cadastro de parceiro atualizado."
+        elif "partner_created" in payload:
+            description = "Novo parceiro cadastrado."
+        elif "partner_deleted" in payload:
+            description = "Parceiro removido."
+        elif "base_updated" in payload:
+            description = "Parametrização de base atualizada."
+        elif "base_created" in payload:
+            description = "Nova base cadastrada."
+        elif "base_deleted" in payload:
+            description = "Base removida."
+        elif "company_updated" in payload:
+            description = "Cadastro de empresa atualizado."
+        elif "company_created" in payload:
+            description = "Nova empresa cadastrada."
+        elif "company_deleted" in payload:
+            description = "Empresa removida."
+        else:
+            description = f"Alteração cadastral: {payload}"
+
+    return {
+        "id": event.id,
+        "created_at": event.created_at,
+        "actor_name": actor_name,
+        "actor_role": actor_role,
+        "event_type": event_type,
+        "category": category,
+        "category_class": category_class,
+        "description": description,
+        "protocol": request.protocol if request else None,
+        "request_id": request.id if request else None,
+        "payload": payload,
+    }
+
+
+def _get_logs_context(session: Session, page: int = 1, company_id: int | None = None, search: str = "") -> dict:
+    query = (
+        select(EventLog, User, TravelRequest)
+        .outerjoin(User, EventLog.actor_user_id == User.id)
+        .outerjoin(TravelRequest, EventLog.request_id == TravelRequest.id)
+    )
+    
+    if company_id:
+        query = query.where(
+            (TravelRequest.company_id == company_id) | (User.company_id == company_id)
+        )
+        
+    if search:
+        search_like = f"%{search}%"
+        query = query.where(
+            (TravelRequest.protocol.ilike(search_like)) |
+            (User.full_name.ilike(search_like)) |
+            (EventLog.event_type.ilike(search_like)) |
+            (EventLog.payload.ilike(search_like))
+        )
+        
+    count_query = (
+        select(func.count(EventLog.id))
+        .outerjoin(User, EventLog.actor_user_id == User.id)
+        .outerjoin(TravelRequest, EventLog.request_id == TravelRequest.id)
+    )
+    if company_id:
+        count_query = count_query.where(
+            (TravelRequest.company_id == company_id) | (User.company_id == company_id)
+        )
+    if search:
+        search_like = f"%{search}%"
+        count_query = count_query.where(
+            (TravelRequest.protocol.ilike(search_like)) |
+            (User.full_name.ilike(search_like)) |
+            (EventLog.event_type.ilike(search_like)) |
+            (EventLog.payload.ilike(search_like))
+        )
+    total_logs = session.exec(count_query).first() or 0
+    
+    page_size = 20
+    total_pages = (total_logs + page_size - 1) // page_size if total_logs > 0 else 1
+    
+    if page > total_pages:
+        page = total_pages
+        
+    query = query.order_by(EventLog.created_at.desc()).offset((page - 1) * page_size).limit(page_size)
+    results = session.exec(query).all()
+    
+    log_rows = []
+    for event, actor, request in results:
+        log_rows.append(format_event_log(event, actor, request))
+        
+    req_query = select(func.count(TravelRequest.id))
+    if company_id:
+        req_query = req_query.where(TravelRequest.company_id == company_id)
+    total_requests = session.exec(req_query).first() or 0
+    
+    triage_query = select(func.count(EventLog.id)).where(EventLog.event_type.in_(["request_confirmed", "request_refused"]))
+    if company_id:
+        triage_query = (
+            triage_query.outerjoin(TravelRequest, EventLog.request_id == TravelRequest.id)
+            .outerjoin(User, EventLog.actor_user_id == User.id)
+            .where((TravelRequest.company_id == company_id) | (User.company_id == company_id))
+        )
+    triage_actions = session.exec(triage_query).first() or 0
+    
+    canceled_query = select(func.count(TravelRequest.id)).where(TravelRequest.status == RequestStatus.CANCELED)
+    if company_id:
+        canceled_query = canceled_query.where(TravelRequest.company_id == company_id)
+    canceled_trips = session.exec(canceled_query).first() or 0
+    
+    alerts_query = select(func.count(EventLog.id)).where(EventLog.event_type.in_(["request_refused", "request_modified_by_partner"]))
+    if company_id:
+        alerts_query = (
+            alerts_query.outerjoin(TravelRequest, EventLog.request_id == TravelRequest.id)
+            .outerjoin(User, EventLog.actor_user_id == User.id)
+            .where((TravelRequest.company_id == company_id) | (User.company_id == company_id))
+        )
+    alerts = session.exec(alerts_query).first() or 0
+    
+    kpis = {
+        "total_requests": total_requests,
+        "triage_actions": triage_actions,
+        "canceled_trips": canceled_trips,
+        "alerts": alerts,
+    }
+    
+    return {
+        "log_rows": log_rows,
+        "kpis": kpis,
+        "page": page,
+        "total_pages": total_pages,
+        "total_logs": total_logs,
+    }
+
+
+@router.get("/empresa/logs", response_class=HTMLResponse)
+def company_logs(
+    request: Request,
+    session: Session = Depends(get_session),
+):
+    user = _require_roles_or_redirect(request, session, (UserRole.LOGISTICS_MANAGER,))
+    if isinstance(user, RedirectResponse):
+        return user
+    
+    companies = session.exec(select(Company).where(Company.active == True).order_by(Company.name)).all()
+    
+    search = request.query_params.get("search", "").strip()
+    company_id_raw = request.query_params.get("company_id", "").strip()
+    company_id = int(company_id_raw) if company_id_raw.isdigit() else None
+    
+    page_raw = request.query_params.get("page", "1")
+    page = int(page_raw) if page_raw.isdigit() else 1
+    if page < 1:
+        page = 1
+        
+    logs_ctx = _get_logs_context(session, page=page, company_id=company_id, search=search)
+    
+    return templates.TemplateResponse(
+        "company_logs.html",
+        {
+            "request": request,
+            "user": user,
+            "companies": companies,
+            "selected_company_id": company_id,
+            "search": search,
+            **logs_ctx,
+            "title": "Empresa | Logs do Sistema",
+        }
+    )
+
+
+@router.get("/empresa/logs/fragments/list", response_class=HTMLResponse)
+def company_logs_fragment(
+    request: Request,
+    session: Session = Depends(get_session),
+):
+    user = _require_roles_or_redirect(request, session, (UserRole.LOGISTICS_MANAGER,))
+    if isinstance(user, RedirectResponse):
+        return user
+        
+    search = request.query_params.get("search", "").strip()
+    company_id_raw = request.query_params.get("company_id", "").strip()
+    company_id = int(company_id_raw) if company_id_raw.isdigit() else None
+    
+    page_raw = request.query_params.get("page", "1")
+    page = int(page_raw) if page_raw.isdigit() else 1
+    if page < 1:
+        page = 1
+        
+    logs_ctx = _get_logs_context(session, page=page, company_id=company_id, search=search)
+    
+    return templates.TemplateResponse(
+        "_logs_table.html",
+        {
+            "request": request,
+            "user": user,
+            "selected_company_id": company_id,
+            "search": search,
+            **logs_ctx,
+        }
+    )
+
+
+
 @router.post("/empresa/gerencial/supervisors/new")
 async def register_supervisor(
     request: Request,

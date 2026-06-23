@@ -1,0 +1,125 @@
+{% extends 'base.html' %}
+{% block content %}
+<section class="hero">
+  <h2>Empresa | Logs do Sistema</h2>
+  <p>Acompanhamento de ações, triagens, alterações cadastrais e auditoria geral.</p>
+</section>
+
+<!-- KPIs Bar -->
+<section class="logs-metrics">
+  <div>
+    <span>Total de Solicitações</span>
+    <strong id="kpi-total-requests">{{ kpis.total_requests }}</strong>
+  </div>
+  <div>
+    <span>Ações de Triage</span>
+    <strong id="kpi-triage-actions">{{ kpis.triage_actions }}</strong>
+  </div>
+  <div>
+    <span>Viagens Canceladas</span>
+    <strong id="kpi-canceled-trips">{{ kpis.canceled_trips }}</strong>
+  </div>
+  <div>
+    <span>Alertas / Avisos</span>
+    <strong id="kpi-alerts">{{ kpis.alerts }}</strong>
+  </div>
+</section>
+
+<!-- Filters Bar -->
+<div class="logs-filters-bar">
+  <div class="logs-search-wrapper">
+    <span class="logs-search-icon">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="opacity: 0.7;">
+        <circle cx="11" cy="11" r="8"></circle>
+        <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+      </svg>
+    </span>
+    <input 
+      type="text" 
+      name="search" 
+      class="logs-search-input" 
+      placeholder="Buscar por protocolo, usuário ou descrição..." 
+      hx-get="/empresa/logs/fragments/list"
+      hx-trigger="keyup changed delay:350ms"
+      hx-target="#logs-table-container"
+      hx-swap="outerHTML"
+      hx-include="[name='company_id']"
+      value="{{ search or '' }}"
+    />
+  </div>
+  
+  <select 
+    name="company_id" 
+    class="logs-filter-select"
+    hx-get="/empresa/logs/fragments/list"
+    hx-trigger="change"
+    hx-target="#logs-table-container"
+    hx-swap="outerHTML"
+    hx-include="[name='search']"
+  >
+    <option value="">Todas as Empresas</option>
+    {% for company in companies %}
+      <option value="{{ company.id }}" {% if selected_company_id == company.id %}selected{% endif %}>{{ company.name }}</option>
+    {% endfor %}
+  </select>
+</div>
+
+<!-- Logs Table Container -->
+<div class="panel">
+  <h3 style="margin-bottom: 1rem;">Logs de Auditoria</h3>
+  {% include '_logs_table.html' %}
+</div>
+
+<!-- Log Details Modal -->
+<div id="log-details-modal" class="system-modal hidden" aria-hidden="true" role="dialog" aria-modal="true">
+  <div class="system-modal-dialog">
+    <h3>Detalhes do Log</h3>
+    <div class="system-modal-body">
+      <pre id="log-details-pre"></pre>
+    </div>
+    <div class="system-modal-actions">
+      <button type="button" onclick="hideLogDetails()">Fechar</button>
+    </div>
+  </div>
+</div>
+
+<script>
+  function showLogDetails(btn) {
+    const payloadStr = btn.getAttribute('data-payload');
+    const modal = document.getElementById('log-details-modal');
+    const pre = document.getElementById('log-details-pre');
+    
+    let formatted = payloadStr;
+    try {
+      const parsed = JSON.parse(payloadStr);
+      formatted = JSON.stringify(parsed, null, 2);
+    } catch (e) {
+      // Not a valid JSON string, display as raw text
+    }
+    
+    pre.textContent = formatted || "Nenhum dado adicional.";
+    modal.classList.remove('hidden');
+    modal.setAttribute('aria-hidden', 'false');
+  }
+
+  function hideLogDetails() {
+    const modal = document.getElementById('log-details-modal');
+    modal.classList.add('hidden');
+    modal.setAttribute('aria-hidden', 'true');
+  }
+
+  // Close modal when clicking outside of it
+  document.getElementById('log-details-modal').addEventListener('click', function(event) {
+    if (event.target === this) {
+      hideLogDetails();
+    }
+  });
+
+  // Close modal on Escape key press
+  window.addEventListener('keydown', function(event) {
+    if (event.key === 'Escape') {
+      hideLogDetails();
+    }
+  });
+</script>
+{% endblock %}

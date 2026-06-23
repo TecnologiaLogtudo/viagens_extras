@@ -1396,6 +1396,31 @@ def test_subdir_middleware_rewrites_paths(client: TestClient):
         os.environ["ROOT_PATH"] = ""
 
 
+def test_manager_can_access_logs(client: TestClient):
+    login(client, "gerente@logtudo.local", "gerente123")
+    resp = client.get("/empresa/logs")
+    assert resp.status_code == 200
+    assert "Logs do Sistema" in resp.text
+    assert "Logs de Auditoria" in resp.text
+
+    # Test fragment list
+    resp_frag = client.get("/empresa/logs/fragments/list")
+    assert resp_frag.status_code == 200
+    assert "logs-table-container" in resp_frag.text
+
+
+def test_non_manager_cannot_access_logs(client: TestClient):
+    # Test partner role
+    login(client, "parceiro@logtudo.local", "parceiro123")
+    resp = client.get("/empresa/logs")
+    assert resp.status_code == 403
+
+    # Test supervisor role
+    login(client, "supervisor@logtudo.local", "supervisor123")
+    resp_sup = client.get("/empresa/logs")
+    assert resp_sup.status_code == 403
+
+
 
 
 
