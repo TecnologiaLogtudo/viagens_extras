@@ -61,10 +61,24 @@ class SubdirMiddleware(BaseHTTPMiddleware):
         return response
 
 
+class ASGIPathFixMiddleware:
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] in ("http", "websocket"):
+            root_path = os.getenv("ROOT_PATH", "").rstrip("/")
+            path = scope.get("path", "")
+            if root_path and not path.startswith(root_path):
+                scope["root_path"] = ""
+        await self.app(scope, receive, send)
+
+
 app = FastAPI(
     title="Central de Viagens Extras MVP",
     root_path=os.getenv("ROOT_PATH", "")
 )
+app.add_middleware(ASGIPathFixMiddleware)
 app.add_middleware(SubdirMiddleware)
 app.add_middleware(
     SessionMiddleware,

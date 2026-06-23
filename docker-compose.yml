@@ -14,6 +14,10 @@ services:
       - app_data:/app/app/data
     expose:
       - "8000"
+    # Para testar localmente, remova o '#' das duas linhas abaixo.
+    # Lembre-se de comentar novamente (com '#') antes de enviar ao Coolify!
+    # ports:
+    #   - "8000:8000"
     depends_on:
       db:
         condition: service_healthy

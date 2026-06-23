@@ -1,0 +1,8 @@
+Method: GET | Path: /viagens_extras/static/css/app.css | Raw Path: /viagens_extras/static/css/app.css | Root Path: /viagens_extras/static | Status: 200 | Headers: {}
+Method: GET | Path: /static/css/app.css | Raw Path: /static/css/app.css | Root Path: /viagens_extras/static | Status: 404 | Headers: {}
+Method: GET | Path: /viagens_extras/static/css/app.css | Raw Path: /viagens_extras/static/css/app.css | Root Path: /viagens_extras/static | Status: 200 | Headers: {}
+Method: GET | Path: /static/css/app.css | Raw Path: /static/css/app.css | Root Path: /static | Status: 200 | Headers: {}
+Method: GET | Path: /viagens_extras/static/css/app.css | Raw Path: /viagens_extras/static/css/app.css | Root Path: /viagens_extras/static | Status: 200 | Headers: {'host': 'testserver', 'accept': '*/*', 'accept-encoding': 'gzip, deflate', 'connection': 'keep-alive', 'user-agent': 'testclient'}
+Method: GET | Path: /viagens_extras/static/css/app.css | Raw Path: /viagens_extras/static/css/app.css | Root Path: /viagens_extras/static | Status: 200 | Headers: {}
+Method: GET | Path: /static/css/app.css | Raw Path: /static/css/app.css | Root Path: /static | Status: 200 | Headers: {}
+Method: GET | Path: /static/css/app.css | Raw Path: /static/css/app.css | Root Path: /static | Status: 200 | Headers: {'host': 'logtudo.com.br', 'x-forwarded-prefix': '/viagens_extras'}
