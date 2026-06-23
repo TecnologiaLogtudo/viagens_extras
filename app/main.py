@@ -72,8 +72,36 @@ app.add_middleware(
     same_site="lax",
     https_only=False,
 )
+root_path = os.getenv("ROOT_PATH", "").rstrip("/")
 app.mount("/static", StaticFiles(directory=os.path.join(os.path.dirname(__file__), "static")), name="static")
+if root_path:
+    app.mount(f"{root_path}/static", StaticFiles(directory=os.path.join(os.path.dirname(__file__), "static")), name="static_root")
 app.include_router(web_router)
+
+
+@app.middleware("http")
+async def log_requests(request: Request, call_next):
+    log_file_path = os.path.join(os.path.dirname(__file__), "data", "routing.log")
+    try:
+        response = await call_next(request)
+        status_code = response.status_code
+    except Exception as e:
+        status_code = 500
+        raise e
+    finally:
+        try:
+            with open(log_file_path, "a", encoding="utf-8") as f:
+                f.write(
+                    f"Method: {request.method} | "
+                    f"Path: {request.url.path} | "
+                    f"Raw Path: {request.scope.get('path')} | "
+                    f"Root Path: {request.scope.get('root_path')} | "
+                    f"Status: {status_code} | "
+                    f"Headers: {dict(request.headers)}\n"
+                )
+        except Exception:
+            pass
+    return response
 
 
 @app.on_event("startup")
