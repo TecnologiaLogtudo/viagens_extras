@@ -16,11 +16,11 @@
     <header class="topbar">
       <div class="brand-container">
         <div class="logo-group">
-          <img src="{{ ROOT_PATH }}/static/imagens/Logo02.png" alt="Logtudo" class="header-logo">
           {% if partner_company_logo_path %}
-            <div class="logo-divider"></div>
             <img src="{{ ROOT_PATH }}{{ partner_company_logo_path }}" alt="Logo Parceiro" class="header-logo">
+            <div class="logo-divider"></div>
           {% endif %}
+          <img src="{{ ROOT_PATH }}/static/imagens/logtudo_pages.jpg" alt="Logtudo" class="header-logo">
         </div>
         <div class="brand-text">
           <p class="kicker">Central Logtudo</p>

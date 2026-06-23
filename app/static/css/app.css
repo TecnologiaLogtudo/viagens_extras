@@ -24,14 +24,9 @@ body {
     linear-gradient(150deg, var(--bg-0), var(--bg-1));
 }
 
-body.company-internal {
-  background: url('../imagens/textura3.png');
-  background-size: contain;
-  background-attachment: fixed;
-}
-
+body.company-internal,
 body.partner-portal {
-  background: url('../imagens/textura1.png');
+  background: url('../imagens/textura3.png');
   background-size: contain;
   background-attachment: fixed;
 }
