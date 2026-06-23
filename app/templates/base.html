@@ -90,6 +90,7 @@
     (function () {
       if (!window.EventSource || !window.htmx) return;
 
+      const rootPath = "{{ request.scope.get('root_path', '') }}";
       const role = "{{ user.role.value if user else '' }}";
       const bellBtn = document.getElementById('notif-bell-btn');
       const dropdown = document.getElementById('notif-dropdown');
@@ -99,7 +100,7 @@
 
       function loadNotifications() {
         if (!bellBtn) return;
-        fetch('/notifications')
+        fetch(rootPath + '/notifications')
           .then(res => res.json())
           .then(data => {
             const notifs = data.notifications || [];
@@ -132,7 +133,7 @@
                 btn.addEventListener('click', (e) => {
                   e.stopPropagation();
                   const id = btn.getAttribute('data-id');
-                  fetch(`/notifications/${id}/read`, { method: 'POST' })
+                  fetch(rootPath + `/notifications/${id}/read`, { method: 'POST' })
                     .then(() => loadNotifications());
                 });
               });
@@ -161,7 +162,7 @@
 
         readAllBtn.addEventListener('click', (e) => {
           e.stopPropagation();
-          fetch('/notifications/read-all', { method: 'POST' })
+          fetch(rootPath + '/notifications/read-all', { method: 'POST' })
             .then(() => loadNotifications());
         });
 
@@ -191,7 +192,7 @@
         if (!document.querySelector(target)) return;
         if (refreshTimers[target]) window.clearTimeout(refreshTimers[target]);
         refreshTimers[target] = window.setTimeout(function () {
-          htmx.ajax("GET", url, { target: target, swap: "outerHTML" });
+          htmx.ajax("GET", rootPath + url, { target: target, swap: "outerHTML" });
         }, 350);
       };
 
@@ -239,7 +240,7 @@
         }
       };
 
-      const stream = new EventSource("/events/stream");
+      const stream = new EventSource(rootPath + "/events/stream");
       stream.addEventListener("request_changed", onRequestChanged);
       stream.addEventListener("driver_status_changed", onDriverChanged);
       stream.addEventListener("manager_data_changed", onManagerChanged);
