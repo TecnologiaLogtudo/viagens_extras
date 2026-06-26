@@ -1,7 +1,7 @@
 {% set can_manage_drivers = user and user.role.value in ['logistics_manager', 'base_supervisor'] %}
 <div id="{{ table_id }}" class="table-wrap">
   {% if can_manage_drivers %}
-  <form id="bulk-delete-form" method="post" action="/empresa/motoristas/bulk-delete" onsubmit="return confirm('Excluir os motoristas selecionados?');"></form>
+  <form id="bulk-delete-form" method="post" action="/empresa/motoristas/bulk-delete?filter_base_id={{ filter_base_id or '' }}&filter_vehicle_type={{ filter_vehicle_type or '' }}&filter_name={{ filter_name or '' }}&page={{ page or 1 }}" onsubmit="return confirm('Excluir os motoristas selecionados?');"></form>
   {% endif %}
   <table class="drivers-table">
     <thead>
@@ -47,7 +47,7 @@
         <td class="col-plate">{{ row.plate or '—' }}</td>
         <td class="col-status">
           {% if can_manage_drivers %}
-            <form method="post" action="/empresa/motoristas/{{ row.id }}/toggle-active" style="display:inline; margin:0;">
+            <form method="post" action="/empresa/motoristas/{{ row.id }}/toggle-active?filter_base_id={{ filter_base_id or '' }}&filter_vehicle_type={{ filter_vehicle_type or '' }}&filter_name={{ filter_name or '' }}&page={{ page or 1 }}" style="display:inline; margin:0;">
               {% if row.active %}
                 <button type="submit" class="pill green" style="border:none; cursor:pointer;" data-confirm="Desativar este motorista?">Ativo</button>
               {% else %}
@@ -65,8 +65,8 @@
         {% if can_manage_drivers %}
         <td class="col-actions">
           <div style="display: inline-flex; gap: 0.5rem; align-items: center;">
-            <a class="pill" href="/empresa/motoristas?edit_driver_id={{ row.id }}">Editar</a>
-            <form method="post" action="/empresa/motoristas/{{ row.id }}/delete" style="display:inline; margin:0;">
+            <a class="pill" href="/empresa/motoristas?edit_driver_id={{ row.id }}&filter_base_id={{ filter_base_id or '' }}&filter_vehicle_type={{ filter_vehicle_type or '' }}&filter_name={{ filter_name or '' }}&page={{ page or 1 }}">Editar</a>
+            <form method="post" action="/empresa/motoristas/{{ row.id }}/delete?filter_base_id={{ filter_base_id or '' }}&filter_vehicle_type={{ filter_vehicle_type or '' }}&filter_name={{ filter_name or '' }}&page={{ page or 1 }}" style="display:inline; margin:0;">
               <button type="submit" class="pill red" style="border:none; cursor:pointer; font-size:0.68rem; font-weight:800;" data-confirm="Excluir este motorista?">Excluir</button>
             </form>
           </div>

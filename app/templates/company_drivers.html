@@ -10,7 +10,7 @@
 {% if can_manage_drivers %}
 <section class="panel">
   <h3>{{ "Editar Motorista" if edit_driver else "Cadastrar Motorista" }}</h3>
-  <form class="form-grid" method="post" action="/empresa/motoristas/save">
+  <form class="form-grid" method="post" action="/empresa/motoristas/save?filter_base_id={{ filter_base_id or '' }}&filter_vehicle_type={{ filter_vehicle_type or '' }}&filter_name={{ filter_name or '' }}&page={{ page or 1 }}">
     {% if edit_driver %}
     <input type="hidden" name="driver_id" value="{{ edit_driver.id }}" />
     {% endif %}
@@ -49,7 +49,7 @@
     {% endif %}
     <button type="submit" class="button-like" style="width: fit-content;">{{ "Salvar alterações" if edit_driver else "Cadastrar Motorista" }}</button>
     {% if edit_driver %}
-    <a class="pill" href="/empresa/motoristas">Cancelar edição</a>
+    <a class="pill" href="/empresa/motoristas?filter_base_id={{ filter_base_id or '' }}&filter_vehicle_type={{ filter_vehicle_type or '' }}&filter_name={{ filter_name or '' }}&page={{ page or 1 }}">Cancelar edição</a>
     {% endif %}
   </form>
 </section>

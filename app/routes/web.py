@@ -128,6 +128,32 @@ def _redirect(path: str):
     return RedirectResponse(url=path, status_code=303)
 
 
+def _drivers_redirect(
+    message: str | None = None,
+    error: str | None = None,
+    filter_base_id: str | None = None,
+    filter_vehicle_type: str | None = None,
+    filter_name: str | None = None,
+    page: int = 1,
+) -> RedirectResponse:
+    url = "/empresa/motoristas?"
+    params = []
+    if message:
+        params.append(f"message={quote_plus(message)}")
+    if error:
+        params.append(f"error={quote_plus(error)}")
+    if filter_base_id:
+        params.append(f"filter_base_id={quote_plus(str(filter_base_id))}")
+    if filter_vehicle_type:
+        params.append(f"filter_vehicle_type={quote_plus(str(filter_vehicle_type))}")
+    if filter_name:
+        params.append(f"filter_name={quote_plus(str(filter_name))}")
+    if page and int(page) > 1:
+        params.append(f"page={page}")
+    url += "&".join(params)
+    return _redirect(url)
+
+
 def _partner_company_logo_path(session: Session, user: User) -> str | None:
     if user.role != UserRole.PARTNER_REQUESTER or user.company_id is None:
         return None
@@ -994,6 +1020,10 @@ def save_driver(
     vehicle_type: str | None = Form(default=None),
     plate: str | None = Form(default=None),
     active: str | None = Form(default=None),
+    filter_base_id: str | None = None,
+    filter_vehicle_type: str | None = None,
+    filter_name: str | None = None,
+    page: int = 1,
     session: Session = Depends(get_session),
 ):
     user = _require_roles_or_redirect(request, session, (UserRole.LOGISTICS_MANAGER, UserRole.BASE_SUPERVISOR))
@@ -1003,20 +1033,24 @@ def save_driver(
     normalized_name = name.strip()
     phone_digits = re.sub(r"\D", "", phone.strip())
     if not normalized_name:
-        return _redirect(f"/empresa/motoristas?error={quote_plus('Nome é obrigatório')}")
+        return _drivers_redirect(error="Nome é obrigatório", filter_base_id=filter_base_id, filter_vehicle_type=filter_vehicle_type, filter_name=filter_name, page=page)
     if phone_digits and not PHONE_BR_DIGITS_RE.match(phone_digits):
-        return _redirect(
-            f"/empresa/motoristas?error={quote_plus('Telefone inválido. Use DDD com 10 ou 11 dígitos.')}"
+        return _drivers_redirect(
+            error="Telefone inválido. Use DDD com 10 ou 11 dígitos.",
+            filter_base_id=filter_base_id,
+            filter_vehicle_type=filter_vehicle_type,
+            filter_name=filter_name,
+            page=page,
         )
 
     base = session.get(Base, base_id)
     if not base or not base.active:
-        return _redirect(f"/empresa/motoristas?error={quote_plus('Base inválida')}")
+        return _drivers_redirect(error="Base inválida", filter_base_id=filter_base_id, filter_vehicle_type=filter_vehicle_type, filter_name=filter_name, page=page)
 
     if user.role == UserRole.BASE_SUPERVISOR:
         allowed = supervisor_allowed_base_ids(session, user)
         if base_id not in allowed:
-            return _redirect(f"/empresa/motoristas?error={quote_plus('Você não tem permissão para esta base')}")
+            return _drivers_redirect(error="Você não tem permissão para esta base", filter_base_id=filter_base_id, filter_vehicle_type=filter_vehicle_type, filter_name=filter_name, page=page)
 
     # Handle vehicle linking/creation/updating
     normalized_plate = plate.strip().upper() if plate else ""
@@ -1025,8 +1059,12 @@ def save_driver(
     vehicle_id_to_link = None
     if normalized_plate:
         if not normalized_vehicle_type:
-            return _redirect(
-                f"/empresa/motoristas?error={quote_plus('Categoria do veículo é obrigatória quando a placa é fornecida')}"
+            return _drivers_redirect(
+                error="Categoria do veículo é obrigatória quando a placa é fornecida",
+                filter_base_id=filter_base_id,
+                filter_vehicle_type=filter_vehicle_type,
+                filter_name=filter_name,
+                page=page,
             )
         
         # Check if another vehicle has this plate
@@ -1057,11 +1095,11 @@ def save_driver(
     if driver_id is not None:
         target_driver = session.get(Driver, driver_id)
         if not target_driver:
-            return _redirect(f"/empresa/motoristas?error={quote_plus('Motorista inválido')}")
+            return _drivers_redirect(error="Motorista inválido", filter_base_id=filter_base_id, filter_vehicle_type=filter_vehicle_type, filter_name=filter_name, page=page)
         if user.role == UserRole.BASE_SUPERVISOR:
             allowed = supervisor_allowed_base_ids(session, user)
             if target_driver.base_id not in allowed:
-                return _redirect(f"/empresa/motoristas?error={quote_plus('Você não tem permissão para editar este motorista')}")
+                return _drivers_redirect(error="Você não tem permissão para editar este motorista", filter_base_id=filter_base_id, filter_vehicle_type=filter_vehicle_type, filter_name=filter_name, page=page)
     else:
         target_driver = session.exec(
             select(Driver).where(and_(Driver.name == normalized_name, Driver.base_id == base.id))
@@ -1086,7 +1124,7 @@ def save_driver(
             )
         )
         session.commit()
-        return _redirect(f"/empresa/motoristas?message={quote_plus('Motorista atualizado com sucesso')}")
+        return _drivers_redirect(message="Motorista atualizado com sucesso", filter_base_id=filter_base_id, filter_vehicle_type=filter_vehicle_type, filter_name=filter_name, page=page)
 
     new_driver = Driver(
         name=normalized_name,
@@ -1106,13 +1144,17 @@ def save_driver(
     )
     _notify_supervisors(session, "Novo Motorista Adicionado", f"O motorista {new_driver.name} foi adicionado à base.", new_driver.base_id)
     session.commit()
-    return _redirect(f"/empresa/motoristas?message={quote_plus('Motorista cadastrado com sucesso')}")
+    return _drivers_redirect(message="Motorista cadastrado com sucesso", filter_base_id=filter_base_id, filter_vehicle_type=filter_vehicle_type, filter_name=filter_name, page=page)
 
 
 @router.post("/empresa/motoristas/bulk-delete")
 async def bulk_delete_drivers(
     request: Request,
     driver_ids: list[str] | None = Form(None),
+    filter_base_id: str | None = None,
+    filter_vehicle_type: str | None = None,
+    filter_name: str | None = None,
+    page: int = 1,
     session: Session = Depends(get_session),
 ):
     user = _require_roles_or_redirect(request, session, (UserRole.LOGISTICS_MANAGER, UserRole.BASE_SUPERVISOR))
@@ -1131,7 +1173,7 @@ async def bulk_delete_drivers(
     unique_driver_ids = sorted({int(did) for did in driver_ids_raw if str(did).isdigit()})
     
     if not unique_driver_ids:
-        return _redirect(f"/empresa/motoristas?error={quote_plus('Selecione ao menos um motorista')}")
+        return _drivers_redirect(error="Selecione ao menos um motorista", filter_base_id=filter_base_id, filter_vehicle_type=filter_vehicle_type, filter_name=filter_name, page=page)
 
     allowed = None
     if user.role == UserRole.BASE_SUPERVISOR:
@@ -1155,8 +1197,12 @@ async def bulk_delete_drivers(
         )
     )
     session.commit()
-    return _redirect(
-        f"/empresa/motoristas?message={quote_plus(f'{deleted_count} motorista(s) excluído(s) com sucesso')}"
+    return _drivers_redirect(
+        message=f"{deleted_count} motorista(s) excluído(s) com sucesso",
+        filter_base_id=filter_base_id,
+        filter_vehicle_type=filter_vehicle_type,
+        filter_name=filter_name,
+        page=page,
     )
 
 
@@ -1164,6 +1210,10 @@ async def bulk_delete_drivers(
 def delete_driver(
     request: Request,
     driver_id: int,
+    filter_base_id: str | None = None,
+    filter_vehicle_type: str | None = None,
+    filter_name: str | None = None,
+    page: int = 1,
     session: Session = Depends(get_session),
 ):
     user = _require_roles_or_redirect(request, session, (UserRole.LOGISTICS_MANAGER, UserRole.BASE_SUPERVISOR))
@@ -1172,12 +1222,12 @@ def delete_driver(
 
     driver = session.get(Driver, driver_id)
     if not driver:
-        return _redirect(f"/empresa/motoristas?error={quote_plus('Motorista não encontrado')}")
+        return _drivers_redirect(error="Motorista não encontrado", filter_base_id=filter_base_id, filter_vehicle_type=filter_vehicle_type, filter_name=filter_name, page=page)
 
     if user.role == UserRole.BASE_SUPERVISOR:
         allowed = supervisor_allowed_base_ids(session, user)
         if driver.base_id not in allowed:
-            return _redirect(f"/empresa/motoristas?error={quote_plus('Você não tem permissão para excluir este motorista')}")
+            return _drivers_redirect(error="Você não tem permissão para excluir este motorista", filter_base_id=filter_base_id, filter_vehicle_type=filter_vehicle_type, filter_name=filter_name, page=page)
 
     session.delete(driver)
     session.add(
@@ -1188,13 +1238,17 @@ def delete_driver(
         )
     )
     session.commit()
-    return _redirect(f"/empresa/motoristas?message={quote_plus('Motorista excluído com sucesso')}")
+    return _drivers_redirect(message="Motorista excluído com sucesso", filter_base_id=filter_base_id, filter_vehicle_type=filter_vehicle_type, filter_name=filter_name, page=page)
 
 
 @router.post("/empresa/motoristas/{driver_id}/toggle-active")
 def toggle_driver_active(
     request: Request,
     driver_id: int,
+    filter_base_id: str | None = None,
+    filter_vehicle_type: str | None = None,
+    filter_name: str | None = None,
+    page: int = 1,
     session: Session = Depends(get_session),
 ):
     user = _require_roles_or_redirect(request, session, (UserRole.LOGISTICS_MANAGER, UserRole.BASE_SUPERVISOR))
@@ -1203,12 +1257,12 @@ def toggle_driver_active(
 
     driver = session.get(Driver, driver_id)
     if not driver:
-        return _redirect(f"/empresa/motoristas?error={quote_plus('Motorista não encontrado')}")
+        return _drivers_redirect(error="Motorista não encontrado", filter_base_id=filter_base_id, filter_vehicle_type=filter_vehicle_type, filter_name=filter_name, page=page)
 
     if user.role == UserRole.BASE_SUPERVISOR:
         allowed = supervisor_allowed_base_ids(session, user)
         if driver.base_id not in allowed:
-            return _redirect(f"/empresa/motoristas?error={quote_plus('Você não tem permissão para alterar o status deste motorista')}")
+            return _drivers_redirect(error="Você não tem permissão para alterar o status deste motorista", filter_base_id=filter_base_id, filter_vehicle_type=filter_vehicle_type, filter_name=filter_name, page=page)
 
     driver.active = not driver.active
     session.add(driver)
@@ -1222,7 +1276,7 @@ def toggle_driver_active(
     session.commit()
     
     state_str = "ativado" if driver.active else "desativado"
-    return _redirect(f"/empresa/motoristas?message={quote_plus(f'Motorista {state_str} com sucesso')}")
+    return _drivers_redirect(message=f"Motorista {state_str} com sucesso", filter_base_id=filter_base_id, filter_vehicle_type=filter_vehicle_type, filter_name=filter_name, page=page)
 
 
 @router.get("/empresa/gerencial", response_class=HTMLResponse)
