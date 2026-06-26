@@ -106,7 +106,7 @@ function updateConfirmedVehiclesAndDrivers(reqId, defaultVehicleTypes, defaultDr
   <div class="table-wrap">
     <table>
       <thead>
-        <tr><th>Protocolo</th><th>Solicitado em</th><th>Status</th><th>Base</th><th>SLA</th><th>Ações</th></tr>
+        <tr><th>Protocolo</th><th>Solicitado em</th><th>Tipo</th><th>Status</th><th>Base</th><th>SLA</th><th>Ações</th></tr>
       </thead>
       <tbody>
       {% for req in travel_requests %}
@@ -115,8 +115,9 @@ function updateConfirmedVehiclesAndDrivers(reqId, defaultVehicleTypes, defaultDr
       <tr>
         <td>{{ req.protocol }}</td>
         <td>{{ req.created_at | local_time }}</td>
+        <td>{{ req.request_type }}</td>
         <td><span class="pill {{ req.status.value }}">{{ status_labels.get(req.id, req.status.value) }}</span></td>
-        <td>{{ bases[req.base_id].name }}</td>
+        <td>{{ bases[req.base_id].name }} - {{ bases[req.base_id].location }}</td>
         <td><span class="pill {{ sla_color }}">{{ (ratio*100)|round(0) }}%</span></td>
         <td>
           <button hx-get="/empresa/requests/{{ req.id }}/supervisor-panel" hx-target="#supervisor-panel" hx-swap="outerHTML" type="button">Abrir painel</button>

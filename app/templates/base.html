@@ -100,7 +100,7 @@
     (function () {
       if (!window.EventSource || !window.htmx) return;
 
-      const rootPath = "{{ request.scope.get('root_path', '') }}";
+      const rootPath = "{{ ROOT_PATH }}";
       const role = "{{ user.role.value if user else '' }}";
       const bellBtn = document.getElementById('notif-bell-btn');
       const dropdown = document.getElementById('notif-dropdown');

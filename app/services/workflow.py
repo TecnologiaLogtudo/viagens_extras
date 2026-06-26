@@ -110,6 +110,7 @@ def supervisor_can_access_request(session: Session, user: User, request: TravelR
     if user.role != UserRole.BASE_SUPERVISOR:
         return False
     
+    # 1. Check if the supervisor is linked to this specific company and base
     allowed = session.exec(
         select(CompanyBase.id)
         .join(UserCompanyBaseLink, UserCompanyBaseLink.company_base_id == CompanyBase.id)
@@ -123,7 +124,18 @@ def supervisor_can_access_request(session: Session, user: User, request: TravelR
     if allowed:
         return True
     
-    # Fallback for legacy scoping
+    # Check if this user is explicitly linked to any company base
+    has_links = session.exec(
+        select(UserCompanyBaseLink.company_base_id)
+        .where(UserCompanyBaseLink.user_id == user.id)
+    ).first() is not None
+    
+    # If the supervisor is explicitly linked to some companies, do NOT allow fallback
+    # to access requests for other companies in the same base.
+    if has_links:
+        return False
+    
+    # Fallback for legacy scoping (only for users without any links)
     if user.base_id == request.base_id:
         return True
     

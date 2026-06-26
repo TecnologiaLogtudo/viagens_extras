@@ -563,5 +563,83 @@ def test_create_request_notifications_for_all_profiles(session, monkeypatch):
     assert any(n.channel == "in_app" for n in mgr_quote_notifs)
 
 
+def test_supervisor_strict_scoping(session):
+    from app.services.workflow import supervisor_can_access_request
+    from app.models import UserCompanyBaseLink, TravelRequest, TravelRequestCreate
+
+    # 1. Setup two companies and one base
+    company_a = session.exec(select(Company)).first()
+    company_b = Company(name="Company B", cnpj="11")
+    session.add(company_b)
+    session.flush()
+
+    base = session.exec(select(Base)).first()
+    
+    # Create CompanyBase link for Company B
+    cb_b = CompanyBase(company_id=company_b.id, base_id=base.id)
+    session.add(cb_b)
+    session.flush()
+
+    # 2. Setup a supervisor
+    supervisor = User(
+        full_name="Supervisor Strict",
+        email="sup_strict@test.com",
+        role=UserRole.BASE_SUPERVISOR,
+        base_id=base.id
+    )
+    session.add(supervisor)
+    session.flush()
+
+    # Create travel request for Company A
+    partner_a = session.exec(select(User).where(User.role == UserRole.PARTNER_REQUESTER)).first()
+    payload_a = TravelRequestCreate(
+        base_id=base.id,
+        request_type="Viagem extra NILO",
+        requested_datetime=datetime(2030, 1, 3, 10, 0, tzinfo=timezone.utc),
+        origin="A",
+        destination="B",
+        quantity=1,
+        vehicle_type_requested="sedan",
+        cost_center="CC",
+        reason="motivo",
+    )
+    req_a = create_request(session, partner_a, payload_a)
+
+    # Create travel request for Company B
+    partner_b = User(
+        full_name="Partner B",
+        email="partner_b@test.com",
+        role=UserRole.PARTNER_REQUESTER,
+        company_id=company_b.id
+    )
+    session.add(partner_b)
+    session.flush()
+    payload_b = TravelRequestCreate(
+        base_id=base.id,
+        request_type="Viagem extra NILO",
+        requested_datetime=datetime(2030, 1, 3, 10, 0, tzinfo=timezone.utc),
+        origin="A",
+        destination="B",
+        quantity=1,
+        vehicle_type_requested="sedan",
+        cost_center="CC",
+        reason="motivo",
+    )
+    req_b = create_request(session, partner_b, payload_b)
+
+    # 3. Test legacy fallback (no links): supervisor should be able to see both
+    assert supervisor_can_access_request(session, supervisor, req_a) is True
+    assert supervisor_can_access_request(session, supervisor, req_b) is True
+
+    # 4. Link supervisor to Company B only
+    session.add(UserCompanyBaseLink(user_id=supervisor.id, company_base_id=cb_b.id))
+    session.commit()
+
+    # 5. Verify strict scoping: supervisor can see Company B but NOT Company A request
+    assert supervisor_can_access_request(session, supervisor, req_b) is True
+    assert supervisor_can_access_request(session, supervisor, req_a) is False
+
+
+
 
 

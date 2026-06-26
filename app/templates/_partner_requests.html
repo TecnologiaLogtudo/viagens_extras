@@ -58,7 +58,7 @@
   <div class="table-wrap">
     <table>
       <thead>
-        <tr><th>Protocolo</th><th>Solicitado em</th><th>Status</th><th>Base</th><th>Ações</th></tr>
+        <tr><th>Protocolo</th><th>Solicitado em</th><th>Tipo</th><th>Status</th><th>Base</th><th>Ações</th></tr>
       </thead>
       <tbody>
       {% for req in travel_requests %}
@@ -66,8 +66,9 @@
         <tr>
           <td>{{ req.protocol }}</td>
           <td>{{ req.created_at | local_time }}</td>
+          <td>{{ req.request_type }}</td>
           <td><span class="pill {{ req.status.value }}">{{ status_labels.get(req.id, req.status.value) }}</span></td>
-          <td>{{ bases[req.base_id].name }}</td>
+          <td>{{ bases[req.base_id].name }} - {{ bases[req.base_id].location }}</td>
           <td>
             <div class="actions-container">
               {% if conf %}

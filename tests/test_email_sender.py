@@ -60,3 +60,10 @@ def test_send_email_failure(monkeypatch):
     monkeypatch.setattr("app.services.email_sender.smtplib.SMTP_SSL", BrokenSMTP)
     with pytest.raises(EmailDeliveryError):
         send_email("to@example.com", "Subject", "Body")
+
+
+def test_send_email_local_skipped(monkeypatch):
+    _set_env(monkeypatch)
+    # Não mockamos o smtplib. Se ele tentasse enviar, falharia pois o host smtp.example.com é inválido.
+    # Mas como o e-mail termina em .local, ele deve retornar imediatamente com sucesso.
+    send_email("gerente@logtudo.local", "Subject", "Body")

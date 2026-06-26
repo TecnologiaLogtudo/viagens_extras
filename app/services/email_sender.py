@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import logging
 import os
 import smtplib
 from dataclasses import dataclass
 from email.message import EmailMessage
+
+logger = logging.getLogger(__name__)
 
 
 class EmailDeliveryError(Exception):
@@ -66,6 +69,11 @@ def send_email(
     timeout_seconds: int = 10,
     attachment_path: str | None = None,
 ) -> None:
+    # Ignora o envio para domínios de teste local (.local) para evitar erros de SMTP
+    if to_email.strip().lower().endswith(".local"):
+        logger.info("Envio de e-mail ignorado para destinatário mock: %s", to_email)
+        return
+
     settings = load_smtp_settings_from_env()
 
     message = EmailMessage()
