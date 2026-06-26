@@ -2230,15 +2230,43 @@ def delete_base(
     base = session.get(Base, base_id)
     if not base:
         return _redirect("/empresa/gerencial?error=Base+invalida")
-    # Prevent deletion if companies are linked
-    linked = session.exec(select(CompanyBase).where(CompanyBase.base_id == base.id)).first()
-    if linked:
-        return _redirect("/empresa/gerencial?error=Não+é+possível+excluir+uma+base+com+empresas+vinculadas")
-    session.delete(base)
-    session.add(EventLog(actor_user_id=user.id, event_type="manager_data_changed", payload="base_deleted"))
-    session.commit()
-    return _redirect("/empresa/gerencial?message=Base+deletada+com+sucesso")
+    
+    # Check referencing tables beforehand
+    refs = []
+    if session.exec(select(CompanyBase).where(CompanyBase.base_id == base.id)).first():
+        refs.append("empresas vinculadas")
+    if session.exec(select(Driver).where(Driver.base_id == base.id)).first():
+        refs.append("motoristas")
+    if session.exec(select(Vehicle).where(Vehicle.base_id == base.id)).first():
+        refs.append("veículos")
+    if session.exec(select(User).where(User.base_id == base.id)).first():
+        refs.append("usuários")
+    if session.exec(select(UserBaseLink).where(UserBaseLink.base_id == base.id)).first():
+        refs.append("supervisores/vínculos de base")
+    if session.exec(select(TravelRequest).where(TravelRequest.base_id == base.id)).first():
+        refs.append("solicitações de viagem (histórico)")
 
+    if refs:
+        ref_str = ", ".join(refs)
+        return _redirect(
+            f"/empresa/gerencial?error={quote_plus(f'Não é possível excluir a base {base.name} - {base.location} pois ela possui vínculos ativos com: {ref_str}.')}"
+        )
+
+    try:
+        session.delete(base)
+        session.add(
+            EventLog(
+                actor_user_id=user.id,
+                event_type="manager_data_changed",
+                payload=f"base_deleted|base_id={base_id}",
+            )
+        )
+        session.commit()
+    except Exception as e:
+        session.rollback()
+        return _redirect(f"/empresa/gerencial?error={quote_plus('Erro de integridade ao deletar a base.')}")
+
+    return _redirect("/empresa/gerencial?message=Base+deletada+com+sucesso")
 
 @router.post("/empresa/gerencial/companies/new")
 def register_company(
