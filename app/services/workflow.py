@@ -1091,57 +1091,70 @@ def generate_pdf_document(session: Session, request: TravelRequest) -> Document:
     )
 
     req_local_dt = local_dt(request.requested_datetime)
+    requester = session.get(User, request.requested_by_user_id) if request.requested_by_user_id else None
+    created_local_dt = local_dt(request.created_at)
+    created_at_str = created_local_dt.strftime("%d/%m/%Y %H:%M") if created_local_dt else "N/A"
+    
+    drivers_attached = []
+    if conf:
+        if conf.driver_ids:
+            try:
+                drv_ids = [int(x.strip()) for x in conf.driver_ids.split(",") if x.strip().isdigit()]
+                if drv_ids:
+                    drivers_attached = session.exec(select(Driver).where(Driver.id.in_(drv_ids))).all()
+            except Exception:
+                pass
+        elif conf.driver_id:
+            drv = session.get(Driver, conf.driver_id)
+            if drv:
+                drivers_attached = [drv]
+    drivers_str = ", ".join(d.name for d in drivers_attached) if drivers_attached else "Nenhum"
 
     # --- Table Data ---
-    data = [
-        [Paragraph("1. Dados do Fornecedor (Solicitante)", header_style), ""],
-        [Paragraph("CNPJ do Fornecedor:", bold_style), Paragraph(company.cnpj if company else "N/A", normal_style)],
-        [Paragraph("Nome do Fornecedor:", bold_style), Paragraph(company.name if company else "N/A", normal_style)],
-        
-        [Paragraph("2. Dados da Solicitação", header_style), ""],
-        [Paragraph("Data de Agendamento:", bold_style), Paragraph(req_local_dt.strftime("%d/%m/%Y") if req_local_dt else "N/A", normal_style)],
-        [Paragraph("Horário:", bold_style), Paragraph(req_local_dt.strftime("%H:%M") if req_local_dt else "N/A", normal_style)],
-        [Paragraph("Base:", bold_style), Paragraph(f"{base.name} - {base.location}" if base else "N/A", normal_style)],
-        [Paragraph("Tipo de pedido:", bold_style), Paragraph("Viagem extra", normal_style)],
-        [Paragraph("Nº do Pedido:", bold_style), Paragraph(request.protocol, normal_style)],
-        [Paragraph("Qtd. Veículos:", bold_style), Paragraph(str(request.quantity), normal_style)],
-        [Paragraph("Tipo de Veículos:", bold_style), Paragraph(request.vehicle_type_requested, normal_style)],
-        [Paragraph("Origem:", bold_style), Paragraph(request.origin, normal_style)],
-        [Paragraph("Destino:", bold_style), Paragraph(request.destination, normal_style)],
-        
-        [Paragraph("3. Aprovação", header_style), ""],
-        [Paragraph("Método de Aprovação:", bold_style), Paragraph(approval_method, normal_style)],
-        [Paragraph("Status:", bold_style), Paragraph("Aprovado" if request.status in (RequestStatus.CONFIRMED, RequestStatus.ACCEPTED, RequestStatus.COMPLETED) else str(request.status.value), normal_style)],
-        [Paragraph("Data de Aprovação:", bold_style), Paragraph(approval_date_str, normal_style)],
-    ]
+    data = []
+    header_indices = []
+    
+    # 1. Supplier / Solicitante
+    header_indices.append(len(data))
+    data.append([Paragraph("1. Dados do Fornecedor (Solicitante)", header_style), ""])
+    data.append([Paragraph("CNPJ do Fornecedor:", bold_style), Paragraph(company.cnpj if company else "N/A", normal_style)])
+    data.append([Paragraph("Nome do Fornecedor:", bold_style), Paragraph(company.name if company else "N/A", normal_style)])
+    data.append([Paragraph("Nome do Solicitante:", bold_style), Paragraph(requester.full_name if requester else "N/A", normal_style)])
+    data.append([Paragraph("E-mail do Solicitante:", bold_style), Paragraph(requester.email if requester else "N/A", normal_style)])
+    
+    # 2. Request Data
+    header_indices.append(len(data))
+    data.append([Paragraph("2. Dados da Solicitação", header_style), ""])
+    data.append([Paragraph("Nº do Pedido:", bold_style), Paragraph(request.protocol, normal_style)])
+    data.append([Paragraph("Data de Agendamento:", bold_style), Paragraph(req_local_dt.strftime("%d/%m/%Y %H:%M") if req_local_dt else "N/A", normal_style)])
+    data.append([Paragraph("Solicitado em:", bold_style), Paragraph(created_at_str, normal_style)])
+    data.append([Paragraph("Base:", bold_style), Paragraph(f"{base.name} - {base.location}" if base else "N/A", normal_style)])
+    data.append([Paragraph("Tipo de pedido:", bold_style), Paragraph("Viagem extra", normal_style)])
+    data.append([Paragraph("Qtd. Veículos:", bold_style), Paragraph(str(request.quantity), normal_style)])
+    data.append([Paragraph("Tipo de Veículos:", bold_style), Paragraph(request.vehicle_type_requested, normal_style)])
+    data.append([Paragraph("Origem:", bold_style), Paragraph(request.origin, normal_style)])
+    data.append([Paragraph("Destino:", bold_style), Paragraph(request.destination, normal_style)])
+    
+    # 3. Approval
+    header_indices.append(len(data))
+    data.append([Paragraph("3. Aprovação", header_style), ""])
+    data.append([Paragraph("Método de Aprovação:", bold_style), Paragraph(approval_method, normal_style)])
+    data.append([Paragraph("Status:", bold_style), Paragraph("Aprovado" if request.status in (RequestStatus.CONFIRMED, RequestStatus.ACCEPTED, RequestStatus.COMPLETED) else str(request.status.value), normal_style)])
+    data.append([Paragraph("Data de Aprovação:", bold_style), Paragraph(approval_date_str, normal_style)])
+    
     if acceptance or otp_code != "N/A":
         data.append([Paragraph("Código OTP Utilizado:", bold_style), Paragraph(otp_code, normal_style)])
         
     data.extend([
         [Paragraph("Aprovado por:", bold_style), Paragraph(signer.full_name if signer else "N/A", normal_style)],
+        [Paragraph("Motorista(s) Alocado(s):", bold_style), Paragraph(drivers_str, normal_style)],
         [Paragraph("Observações:", bold_style), Paragraph(conf.observations if (conf and conf.observations) else "", normal_style)],
     ])
 
     col_widths = [160, 335]  # Total width 495
     t = Table(data, colWidths=col_widths)
 
-    t_style = TableStyle([
-        # Headers styling
-        ('SPAN', (0, 0), (1, 0)),
-        ('BACKGROUND', (0, 0), (1, 0), HexColor("#f8fafc")),
-        ('BOTTOMPADDING', (0, 0), (1, 0), 6),
-        ('TOPPADDING', (0, 0), (1, 0), 6),
-        
-        ('SPAN', (0, 3), (1, 3)),
-        ('BACKGROUND', (0, 3), (1, 3), HexColor("#f8fafc")),
-        ('BOTTOMPADDING', (0, 3), (1, 3), 6),
-        ('TOPPADDING', (0, 3), (1, 3), 6),
-        
-        ('SPAN', (0, 13), (1, 13)),
-        ('BACKGROUND', (0, 13), (1, 13), HexColor("#f8fafc")),
-        ('BOTTOMPADDING', (0, 13), (1, 13), 6),
-        ('TOPPADDING', (0, 13), (1, 13), 6),
-        
+    t_style_cmds = [
         # General layout
         ('GRID', (0, 0), (-1, -1), 0.5, HexColor("#cbd5e1")),
         ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
@@ -1152,7 +1165,15 @@ def generate_pdf_document(session: Session, request: TravelRequest) -> Document:
         ('TOPPADDING', (0, 0), (-1, -1), 5),
         ('LEFTPADDING', (0, 0), (-1, -1), 8),
         ('RIGHTPADDING', (0, 0), (-1, -1), 8),
-    ])
+    ]
+    for idx in header_indices:
+        t_style_cmds.extend([
+            ('SPAN', (0, idx), (1, idx)),
+            ('BACKGROUND', (0, idx), (1, idx), HexColor("#f8fafc")),
+            ('BOTTOMPADDING', (0, idx), (1, idx), 6),
+            ('TOPPADDING', (0, idx), (1, idx), 6),
+        ])
+    t_style = TableStyle(t_style_cmds)
     t.setStyle(t_style)
 
     # Wrap table to calculate height
