@@ -149,7 +149,7 @@ function validateTriageForm(form) {
         <td style="white-space: nowrap;">{{ bases[req.base_id].name }} - {{ bases[req.base_id].location }}</td>
         <td style="white-space: nowrap;"><span class="pill {{ sla_color }}">{{ (ratio*100)|round(0) }}%</span></td>
         <td>
-          <button hx-get="/empresa/requests/{{ req.id }}/supervisor-panel" hx-target="#supervisor-panel" hx-swap="outerHTML" type="button">Abrir painel</button>
+          <button hx-get="/empresa/requests/{{ req.id }}/supervisor-panel" hx-target="#supervisor-panel" hx-swap="outerHTML" type="button" onclick="document.getElementById('supervisor-panel').scrollIntoView({ behavior: 'smooth' });">Abrir painel</button>
 
           {% if req.status.value in ['accepted', 'in_execution', 'completed'] or (req.status.value == 'confirmed' and req.request_type != 'Cotação de preço') %}
           <a href="/requests/{{ req.id }}/comprovante" class="button-like download-btn" target="_blank" style="background: var(--success, #2ec4b6); color: white; padding: 0.4rem 0.6rem; text-decoration: none; border-radius: 4px; font-size: 0.85rem; display: inline-flex; align-items: center; gap: 0.3rem; margin-left: 0.4rem;">
@@ -285,4 +285,38 @@ function validateTriageForm(form) {
       </tbody>
     </table>
   </div>
+
+  <!-- Pagination -->
+  {% if total_pages and total_pages > 1 %}
+  <div class="pagination-row" style="display: flex; justify-content: space-between; align-items: center; margin-top: 1rem; flex-wrap: wrap; gap: 0.75rem;">
+    <span style="font-size: 0.75rem; font-weight: 700; color: var(--muted);">Página {{ page }} de {{ total_pages }}</span>
+    <div style="display: inline-flex; align-items: center; gap: 0.5rem; margin-left: auto;">
+      {% if page > 1 %}
+      <button type="button" 
+              hx-get="/empresa/operacoes/fragments/requests?page={{ page - 1 }}" 
+              hx-target="#operations-requests" 
+              hx-swap="outerHTML" 
+              class="pill" 
+              style="border: 1px solid var(--line); background: #fff; cursor: pointer; color: var(--ink); font-weight:700;">
+        &laquo; Anterior
+      </button>
+      {% else %}
+      <span class="pill muted" style="border: 1px solid transparent; opacity: 0.5; font-weight:700;">&laquo; Anterior</span>
+      {% endif %}
+
+      {% if page < total_pages %}
+      <button type="button" 
+              hx-get="/empresa/operacoes/fragments/requests?page={{ page + 1 }}" 
+              hx-target="#operations-requests" 
+              hx-swap="outerHTML" 
+              class="pill" 
+              style="border: 1px solid var(--line); background: #fff; cursor: pointer; color: var(--ink); font-weight:700;">
+        Próxima &raquo;
+      </button>
+      {% else %}
+      <span class="pill muted" style="border: 1px solid transparent; opacity: 0.5; font-weight:700;">Próxima &raquo;</span>
+      {% endif %}
+    </div>
+  </div>
+  {% endif %}
 </section>

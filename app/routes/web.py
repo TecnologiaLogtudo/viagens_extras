@@ -259,7 +259,7 @@ def _scoped_requests(session: Session, user: User):
     return scoped
 
 
-def _base_context(session: Session, user: User) -> dict:
+def _base_context(session: Session, user: User, page: int | None = None, page_size: int = 10) -> dict:
     scoped = _scoped_requests(session, user)
     bases = session.exec(select(Base).order_by(Base.name)).all()
     sla_info = {}
@@ -330,8 +330,26 @@ def _base_context(session: Session, user: User) -> dict:
     all_drivers = session.exec(select(Driver)).all()
     drivers_map = {d.id: d for d in all_drivers}
 
+    total_requests_count = len(scoped)
+    total_pages = (total_requests_count + page_size - 1) // page_size if total_requests_count > 0 else 1
+    
+    paginated_requests = scoped
+    if page is not None:
+        if page < 1:
+            page = 1
+        if page > total_pages:
+            page = total_pages
+        start = (page - 1) * page_size
+        end = start + page_size
+        paginated_requests = scoped[start:end]
+    else:
+        page = 1
+
     return {
-        "travel_requests": scoped,
+        "travel_requests": paginated_requests,
+        "page": page,
+        "total_pages": total_pages,
+        "total_requests_count": total_requests_count,
         "bases": {b.id: b for b in bases},
         "sla_info": sla_info,
         "counts": counts,
@@ -896,7 +914,11 @@ def company_operations(
     user = _require_roles_or_redirect(request, session, (UserRole.BASE_SUPERVISOR, UserRole.LOGISTICS_MANAGER))
     if isinstance(user, RedirectResponse):
         return user
-    ctx = _base_context(session, user)
+    
+    page_raw = request.query_params.get("page", "1")
+    page = int(page_raw) if page_raw.isdigit() else 1
+    
+    ctx = _base_context(session, user, page=page)
     selected_request = None
     drivers_for_selected = []
     vehicles_for_selected = []
@@ -1953,7 +1975,10 @@ def operations_requests_fragment(
     session: Session = Depends(get_session),
     user: User = Depends(supervisor_or_manager),
 ):
-    ctx = _base_context(session, user)
+    page_raw = request.query_params.get("page", "1")
+    page = int(page_raw) if page_raw.isdigit() else 1
+    
+    ctx = _base_context(session, user, page=page)
     return templates.TemplateResponse(
         "_operations_requests.html",
         {"request": request, "user": user, **ctx},
