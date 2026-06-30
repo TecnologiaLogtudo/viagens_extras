@@ -30,6 +30,10 @@ else:
         connect_args = {"check_same_thread": False}
     else:
         connect_args = {}
+        if database_url.startswith("postgresql"):
+            connect_args["options"] = "-c timezone=utc"
+        elif "mysql" in database_url:
+            connect_args["init_command"] = "SET time_zone='+00:00'"
 
 engine = create_engine(database_url, echo=False, connect_args=connect_args)
 

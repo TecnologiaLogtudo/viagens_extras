@@ -504,11 +504,14 @@ def triage_request(session: Session, user: User, request: TravelRequest, payload
     request.updated_at = now_utc()
 
     if payload.decision_type == DecisionType.REFUSE:
-        if not payload.refusal_reason:
+        if not payload.refusal_reason or not payload.refusal_reason.strip():
             raise DomainError("Motivo obrigatório para recusa.")
         request.status = RequestStatus.REFUSED
-        log_event(session, request.id, user.id, "request_refused", payload.refusal_reason)
+        log_event(session, request.id, user.id, "request_refused", payload.refusal_reason.strip())
     else:
+        if payload.decision_type in (DecisionType.PARTIAL, DecisionType.ALTERNATIVE):
+            if not payload.observations or not payload.observations.strip():
+                raise DomainError("O motivo da decisão (observações) é obrigatório.")
         # Validate confirmed vehicle types
         vts = [v.strip() for v in payload.confirmed_vehicle_type.split(",") if v.strip()]
         if len(vts) != payload.approved_quantity:
@@ -607,7 +610,19 @@ def triage_request(session: Session, user: User, request: TravelRequest, payload
             except Exception:
                 c_dt = conf.confirmed_datetime if conf else payload.confirmed_datetime
             conf_dt_str = c_dt.strftime("%d/%m/%Y às %H:%M")
+
+            decision_label = "Confirmada"
+            if payload.decision_type == DecisionType.PARTIAL:
+                decision_label = "Parcial"
+            elif payload.decision_type == DecisionType.ALTERNATIVE:
+                decision_label = "Alternativa"
+
             obs_str = f"• Observações: {conf.observations}\n" if (conf and conf.observations) else ""
+            if payload.decision_type in (DecisionType.PARTIAL, DecisionType.ALTERNATIVE):
+                obs_str = (
+                    f"• Decisão da Triagem: {decision_label}\n"
+                    f"• Motivo da decisão: {payload.observations}\n"
+                )
 
             subject = f"Cotação enviada para o pedido {request.protocol}"
             body = (
@@ -632,7 +647,44 @@ def triage_request(session: Session, user: User, request: TravelRequest, payload
                 request_id=request.id,
                 user_id=requester.id,
             )
+        elif request.status == RequestStatus.REFUSED:
+            subject = f"Solicitação recusada: {request.protocol}"
+            body = (
+                f"Olá, {requester.full_name}.\n\n"
+                f"Gostaríamos de informar que a sua solicitação de transporte de protocolo {request.protocol} foi recusada pela equipe de operações da Logtudo.\n\n"
+                f"Detalhes da Solicitação:\n"
+                f"• Protocolo: {request.protocol}\n"
+                f"• Origem: {request.origin}\n"
+                f"• Destino: {request.destination}\n"
+                f"• Data/Hora Programada: {formatted_dt}\n"
+                f"• Motivo da recusa: {payload.refusal_reason.strip() if payload.refusal_reason else ''}\n\n"
+                f"Caso tenha dúvidas ou precise de mais informações, por favor, entre em contato conosco.\n\n"
+                f"Atenciosamente,\n"
+                f"Equipe Logtudo"
+            )
+            send_email_notification(
+                session,
+                NotificationType.REQUEST_CANCELED,
+                requester.email,
+                subject,
+                body,
+                request_id=request.id,
+                user_id=requester.id,
+            )
         else:
+            decision_label = "Confirmado"
+            if payload.decision_type == DecisionType.PARTIAL:
+                decision_label = "Parcial"
+            elif payload.decision_type == DecisionType.ALTERNATIVE:
+                decision_label = "Alternativa"
+
+            decision_details = ""
+            if payload.decision_type in (DecisionType.PARTIAL, DecisionType.ALTERNATIVE):
+                decision_details = (
+                    f"• Decisão da Triagem: {decision_label}\n"
+                    f"• Motivo da decisão: {payload.observations}\n"
+                )
+
             subject = f"Pedido {request.protocol} concluído com sucesso"
             body = (
                 f"Olá, {requester.full_name}.\n\n"
@@ -642,7 +694,8 @@ def triage_request(session: Session, user: User, request: TravelRequest, payload
                 f"• Protocolo: {request.protocol}\n"
                 f"• Origem: {request.origin}\n"
                 f"• Destino: {request.destination}\n"
-                f"• Data/Hora: {formatted_dt}\n\n"
+                f"• Data/Hora: {formatted_dt}\n"
+                f"{decision_details}\n"
                 f"Agradecemos pela parceria. Se tiver qualquer dúvida, estamos à disposição.\n\n"
                 f"Atenciosamente,\n"
                 f"Equipe Logtudo"
@@ -793,6 +846,9 @@ def cancel_request(session: Session, user: User, request: TravelRequest, reason:
         raise DomainError("Somente a equipe Logtudo pode cancelar solicitações.")
     ensure_user_scope(session, user, request)
 
+    if not reason or not reason.strip():
+        raise DomainError("O motivo do cancelamento é obrigatório.")
+
     if request.status == RequestStatus.CANCELED:
         raise DomainError("Pedido já cancelado.")
     if request.status == RequestStatus.COMPLETED:
@@ -801,7 +857,7 @@ def cancel_request(session: Session, user: User, request: TravelRequest, reason:
     request.status = RequestStatus.CANCELED
     request.updated_at = now_utc()
     session.add(request)
-    log_event(session, request.id, user.id, "request_canceled", reason or "")
+    log_event(session, request.id, user.id, "request_canceled", reason.strip())
 
     requester = session.get(User, request.requested_by_user_id)
     if requester:
@@ -812,7 +868,7 @@ def cancel_request(session: Session, user: User, request: TravelRequest, reason:
             local_dt = request.requested_datetime
         formatted_dt = local_dt.strftime("%d/%m/%Y às %H:%M")
 
-        reason_str = reason or "Não informado"
+        reason_str = reason.strip()
         subject = f"Solicitação cancelada: {request.protocol}"
         body = (
             f"Olá, {requester.full_name}.\n\n"

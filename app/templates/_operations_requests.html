@@ -101,6 +101,27 @@ function updateConfirmedVehiclesAndDrivers(reqId, defaultVehicleTypes, defaultDr
     container.appendChild(row);
   }
 }
+
+function validateTriageForm(form) {
+  const decisionType = form.elements['decision_type'].value;
+  const observations = form.elements['observations'].value.trim();
+  const refusalReason = form.elements['refusal_reason'].value.trim();
+
+  if (decisionType === 'refuse') {
+    if (!refusalReason) {
+      alert('O motivo da recusa é obrigatório.');
+      form.elements['refusal_reason'].focus();
+      return false;
+    }
+  } else if (decisionType === 'partial' || decisionType === 'alternative') {
+    if (!observations) {
+      alert('O motivo/observação da decisão é obrigatório para Parcial ou Alternativa.');
+      form.elements['observations'].focus();
+      return false;
+    }
+  }
+  return true;
+}
 </script>
   <h3>Solicitações operacionais</h3>
   <div class="table-wrap">
@@ -138,7 +159,21 @@ function updateConfirmedVehiclesAndDrivers(reqId, defaultVehicleTypes, defaultDr
           {% endif %}
 
           {% if req.status.value not in ['canceled', 'completed'] %}
-          <form method="post" action="/empresa/requests/{{ req.id }}/cancel" style="display: inline; margin-left: 0.4rem;" onsubmit="return confirm('Deseja realmente cancelar esta solicitação?');">
+          <form method="post" action="/empresa/requests/{{ req.id }}/cancel" style="display: inline; margin-left: 0.4rem;" onsubmit="
+            let reason = prompt('Por favor, informe o motivo do cancelamento:');
+            if (reason === null) return false;
+            reason = reason.trim();
+            if (!reason) {
+              alert('O motivo do cancelamento é obrigatório.');
+              return false;
+            }
+            let input = document.createElement('input');
+            input.type = 'hidden';
+            input.name = 'reason';
+            input.value = reason;
+            this.appendChild(input);
+            return confirm('Deseja realmente cancelar esta solicitação?');
+          ">
             <button type="submit" class="button-like" style="background: var(--danger, #e63946); color: white; border: none; padding: 0.4rem 0.6rem; border-radius: 4px; font-size: 0.85rem; cursor: pointer;">Cancelar</button>
           </form>
           {% endif %}
@@ -159,7 +194,7 @@ function updateConfirmedVehiclesAndDrivers(reqId, defaultVehicleTypes, defaultDr
               </div>
             </div>
 
-            <form class="form-grid" method="post" action="/empresa/requests/{{ req.id }}/triage">
+            <form class="form-grid" method="post" action="/empresa/requests/{{ req.id }}/triage" onsubmit="return validateTriageForm(this);">
               <label>Decisão
                 <select name="decision_type" required>
                   <option value="confirm" {% if conf and conf.decision_type.value == 'confirm' %}selected{% endif %}>Confirmar</option>

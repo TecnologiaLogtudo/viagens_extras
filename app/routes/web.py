@@ -2731,7 +2731,7 @@ def cancel_empresa_request(
     if not req:
         raise HTTPException(404, "Pedido não encontrado")
     try:
-        cancel_request(session, user, req, reason=reason or None)
+        cancel_request(session, user, req, reason=reason.strip() if reason else None)
     except DomainError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return _redirect("/empresa/operacoes?message=Pedido+cancelado+com+sucesso.")

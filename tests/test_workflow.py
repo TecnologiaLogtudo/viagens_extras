@@ -152,7 +152,7 @@ def test_cancel_allowed_for_submitted_and_triage(session):
     req2.status = RequestStatus.TRIAGE
     session.add(req2)
     session.commit()
-    canceled2 = cancel_request(session, sup, req2)
+    canceled2 = cancel_request(session, sup, req2, reason="mudanca")
     assert canceled2.status == RequestStatus.CANCELED
 
 
@@ -175,7 +175,7 @@ def test_cancel_allowed_for_confirmed_by_supervisor(session, monkeypatch):
     req = session.get(type(req), req.id)
     assert can_partner_cancel_request(session, req) is False
     with pytest.raises(DomainError, match="Não é possível cancelar uma viagem já concluída"):
-        cancel_request(session, sup, req)
+        cancel_request(session, sup, req, reason="mudanca")
 
 
 def test_partner_cancel_always_blocked(session):
@@ -183,7 +183,7 @@ def test_partner_cancel_always_blocked(session):
     partner = session.exec(select(User).where(User.role == UserRole.PARTNER_REQUESTER)).first()
     assert can_partner_cancel_request(session, req) is False
     with pytest.raises(DomainError, match="Somente a equipe Logtudo pode cancelar solicitações"):
-        cancel_request(session, partner, req)
+        cancel_request(session, partner, req, reason="mudanca")
 
 
 def test_supervisor_cancel_allowed_for_active_statuses(session):
@@ -196,7 +196,7 @@ def test_supervisor_cancel_allowed_for_active_statuses(session):
         req.status = status
         session.add(req)
         session.commit()
-        canceled = cancel_request(session, sup, req)
+        canceled = cancel_request(session, sup, req, reason="mudanca")
         assert canceled.status == RequestStatus.CANCELED
 
 
@@ -638,6 +638,107 @@ def test_supervisor_strict_scoping(session):
     # 5. Verify strict scoping: supervisor can see Company B but NOT Company A request
     assert supervisor_can_access_request(session, supervisor, req_b) is True
     assert supervisor_can_access_request(session, supervisor, req_a) is False
+
+
+def test_cancel_request_requires_reason(session):
+    req = _mk_request(session)
+    sup = session.exec(select(User).where(User.role == UserRole.BASE_SUPERVISOR)).first()
+    
+    with pytest.raises(DomainError, match="O motivo do cancelamento é obrigatório."):
+        cancel_request(session, sup, req, reason=None)
+        
+    with pytest.raises(DomainError, match="O motivo do cancelamento é obrigatório."):
+        cancel_request(session, sup, req, reason="")
+        
+    with pytest.raises(DomainError, match="O motivo do cancelamento é obrigatório."):
+        cancel_request(session, sup, req, reason="   ")
+
+
+def test_triage_request_partial_or_alternative_requires_observations(session, monkeypatch):
+    _mock_email_delivery(monkeypatch)
+    req = _mk_request(session)
+    sup = session.exec(select(User).where(User.role == UserRole.BASE_SUPERVISOR)).first()
+    
+    from app.models import TriageDecisionPayload
+    
+    # Try Partial without observations
+    payload_partial_empty = TriageDecisionPayload(
+        decision_type=DecisionType.PARTIAL,
+        approved_quantity=1,
+        confirmed_datetime=datetime(2030, 1, 2, 10, 30, tzinfo=timezone.utc),
+        confirmed_vehicle_type="sedan",
+        tariff_value=0.0,
+        observations=None,
+    )
+    with pytest.raises(DomainError, match="O motivo da decisão \\(observações\\) é obrigatório."):
+        triage_request(session, sup, req, payload_partial_empty)
+        
+    # Try Alternative without observations
+    payload_alt_empty = TriageDecisionPayload(
+        decision_type=DecisionType.ALTERNATIVE,
+        approved_quantity=1,
+        confirmed_datetime=datetime(2030, 1, 2, 10, 30, tzinfo=timezone.utc),
+        confirmed_vehicle_type="sedan",
+        tariff_value=0.0,
+        observations="  ",
+    )
+    with pytest.raises(DomainError, match="O motivo da decisão \\(observações\\) é obrigatório."):
+        triage_request(session, sup, req, payload_alt_empty)
+
+
+def test_triage_request_sends_correct_emails(session, monkeypatch):
+    sup = session.exec(select(User).where(User.role == UserRole.BASE_SUPERVISOR)).first()
+    from app.models import TriageDecisionPayload
+    
+    sent_emails = []
+    def mock_send_email(to_email, subject, body, attachment_path=None):
+        sent_emails.append({
+            "to_email": to_email,
+            "subject": subject,
+            "body": body,
+            "attachment_path": attachment_path
+        })
+    monkeypatch.setattr("app.services.workflow.send_email", mock_send_email)
+
+    # 1. Refuse decision should send correct refusal email containing refusal_reason
+    req_refuse = _mk_request(session)
+    sent_emails.clear()
+    payload_refuse = TriageDecisionPayload(
+        decision_type=DecisionType.REFUSE,
+        approved_quantity=0,
+        confirmed_datetime=datetime(2030, 1, 2, 10, 30, tzinfo=timezone.utc),
+        confirmed_vehicle_type="sedan",
+        tariff_value=0.0,
+        refusal_reason="Indisponibilidade de frota",
+    )
+    triage_request(session, sup, req_refuse, payload_refuse)
+    assert len(sent_emails) == 1
+    email = sent_emails[-1]
+    assert "recusada" in email["subject"].lower()
+    assert "Indisponibilidade de frota" in email["body"]
+    
+    # 2. Partial decision on Quote should send quote email containing decision and reason
+    req_quote = _mk_request(session)
+    sent_emails.clear()
+    req_quote.request_type = "Cotação de preço"
+    session.add(req_quote)
+    session.commit()
+    
+    payload_partial = TriageDecisionPayload(
+        decision_type=DecisionType.PARTIAL,
+        approved_quantity=1,
+        confirmed_datetime=datetime(2030, 1, 2, 10, 30, tzinfo=timezone.utc),
+        confirmed_vehicle_type="sedan",
+        tariff_value=150.0,
+        observations="Aprovado apenas 1 veículo devido ao limite",
+    )
+    triage_request(session, sup, req_quote, payload_partial)
+    assert len(sent_emails) == 1
+    email = sent_emails[-1]
+    assert "Cotação enviada" in email["subject"]
+    assert "Parcial" in email["body"]
+    assert "Aprovado apenas 1 veículo devido ao limite" in email["body"]
+
 
 
 
