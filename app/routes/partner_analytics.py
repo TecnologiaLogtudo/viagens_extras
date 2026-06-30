@@ -44,10 +44,11 @@ def get_analytics_data(
     bases = session.exec(select(Base)).all()
     bases_map = {b.id: b for b in bases}
 
-    # Available years for filter
-    available_years = sorted(list({local_dt(r.requested_datetime).year for r in requests if r.requested_datetime}), reverse=True)
-    if not available_years:
-        available_years = [datetime.now(ZoneInfo("America/Sao_Paulo")).year]
+    # Available years for filter (always includes the current year dynamically)
+    current_year = datetime.now(ZoneInfo("America/Sao_Paulo")).year
+    years_set = {local_dt(r.requested_datetime).year for r in requests if r.requested_datetime}
+    years_set.add(current_year)
+    available_years = sorted(list(years_set), reverse=True)
 
     # Filtering
     filtered = []

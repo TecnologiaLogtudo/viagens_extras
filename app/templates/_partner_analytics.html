@@ -13,7 +13,9 @@
       <label style="display: flex; flex-direction: column; font-size: 0.8rem; font-weight: 600; color: #475569; gap: 0.25rem;">
         Ano
         <select id="filter-year" onchange="loadAnalyticsData()" style="padding: 0.5rem; border-radius: 6px; border: 1px solid #cbd5e1; outline: none; font-size: 0.85rem; width: 100%;">
-          <!-- Populated dynamically -->
+          <option value="2026">2026</option>
+          <option value="2025">2025</option>
+          <option value="2024">2024</option>
         </select>
       </label>
       
@@ -192,25 +194,29 @@
       const response = await fetch(url);
       const data = await response.json();
       
-      // Populate available years selector if not done yet
-      if (yearSelect.options.length === 0 && data.available_years) {
+      // Populate available years selector based on backend data
+      if (data.available_years && data.available_years.length > 0) {
+        const currentSelectedYear = yearSelect.value;
+        yearSelect.innerHTML = '';
         data.available_years.forEach(yr => {
           const opt = document.createElement('option');
           opt.value = yr;
           opt.textContent = yr;
           yearSelect.appendChild(opt);
         });
-        // Default to current year
-        const currentYear = new Date().getFullYear();
-        if (data.available_years.includes(currentYear)) {
-          yearSelect.value = currentYear;
-        } else if (data.available_years.length > 0) {
-          yearSelect.value = data.available_years[0];
-        }
         
-        // Reload data if the year selector had to be initialized
-        if (yearSelect.value !== year) {
-          return loadAnalyticsData();
+        // Restore selected year if it still exists
+        const exists = Array.from(yearSelect.options).some(opt => opt.value == currentSelectedYear);
+        if (exists) {
+          yearSelect.value = currentSelectedYear;
+        } else {
+          const currentYear = new Date().getFullYear();
+          const hasCurrent = Array.from(yearSelect.options).some(opt => opt.value == currentYear);
+          if (hasCurrent) {
+            yearSelect.value = currentYear;
+          } else if (yearSelect.options.length > 0) {
+            yearSelect.value = yearSelect.options[0].value;
+          }
         }
       }
       
@@ -226,10 +232,18 @@
       
       filterTableData(); // This will apply search + render table
       
-      // Render Charts
-      renderStatusChart(data.charts.status_distribution);
-      renderVolumeChart(data.charts.monthly_volume);
-      renderBasesChart(data.charts.base_distribution);
+      // Render Charts safely
+      if (typeof Chart !== 'undefined') {
+        try {
+          renderStatusChart(data.charts.status_distribution);
+          renderVolumeChart(data.charts.monthly_volume);
+          renderBasesChart(data.charts.base_distribution);
+        } catch (chartErr) {
+          console.error("Erro ao renderizar gráficos:", chartErr);
+        }
+      } else {
+        console.warn("Chart.js não está disponível.");
+      }
       
     } catch (err) {
       console.error("Erro ao carregar dados analíticos:", err);

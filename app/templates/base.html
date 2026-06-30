@@ -9,6 +9,12 @@
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;700;800&family=Sora:wght@500;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/static/css/app.css" />
   <script src="https://unpkg.com/htmx.org@1.9.12"></script>
+  <style>
+    .context-nav a.active-nav {
+      background: var(--primary, #3b82f6) !important;
+      color: white !important;
+    }
+  </style>
 </head>
 <body class="{% if user.role.value in ['base_supervisor', 'logistics_manager', 'finance_readonly'] %}company-internal{% elif user.role.value == 'partner_requester' %}partner-portal{% endif %}">
   <div class="bg-glow"></div>
@@ -62,9 +68,9 @@
 
     <nav class="context-nav" aria-label="Navegação principal">
       {% if user.role.value == 'partner_requester' %}
-        <a href="/partner">Portal Parceiro</a>
-        <a href="/partner?tab=analytics">Análise & Indicadores</a>
-        <a href="/partner/settings">Configurações do Perfil</a>
+        <a href="/partner" class="{% if request.url.path == '/partner' and not request.query_params.get('tab') %}active-nav{% endif %}">Portal Parceiro</a>
+        <a href="/partner?tab=analytics" class="{% if request.query_params.get('tab') == 'analytics' %}active-nav{% endif %}">Análise & Indicadores</a>
+        <a href="/partner/settings" class="{% if request.url.path == '/partner/settings' %}active-nav{% endif %}">Configurações do Perfil</a>
       {% else %}
         {% if user.role.value in ['base_supervisor', 'logistics_manager'] %}
           <a href="/empresa/operacoes">Operações</a>

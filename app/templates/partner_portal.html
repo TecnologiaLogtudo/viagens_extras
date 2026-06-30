@@ -53,16 +53,6 @@
   }
 </style>
 
-<div class="tabs-navigation-wrapper">
-  <button id="tab-btn-operations" class="tab-navigation-btn active-tab" onclick="switchTab('operations')">
-    <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2.5" fill="none" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="9"></rect><rect x="14" y="3" width="7" height="5"></rect><rect x="14" y="12" width="7" height="9"></rect><rect x="3" y="16" width="7" height="5"></rect></svg>
-    Solicitações e Painel
-  </button>
-  <button id="tab-btn-analytics" class="tab-navigation-btn" onclick="switchTab('analytics')">
-    <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2.5" fill="none" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="20" x2="18" y2="10"></line><line x1="12" y1="20" x2="12" y2="4"></line><line x1="6" y1="20" x2="6" y2="14"></line></svg>
-    Análise & Indicadores
-  </button>
-</div>
 
 <div id="pane-operations" class="tab-content-pane active-pane">
   <section class="panel split">
@@ -121,17 +111,12 @@
 
 <script>
   function switchTab(tabId) {
-    document.getElementById('tab-btn-operations').classList.remove('active-tab');
-    document.getElementById('tab-btn-analytics').classList.remove('active-tab');
-    
     document.getElementById('pane-operations').classList.remove('active-pane');
     document.getElementById('pane-analytics').classList.remove('active-pane');
     
     if (tabId === 'operations') {
-      document.getElementById('tab-btn-operations').classList.add('active-tab');
       document.getElementById('pane-operations').classList.add('active-pane');
     } else if (tabId === 'analytics') {
-      document.getElementById('tab-btn-analytics').classList.add('active-tab');
       document.getElementById('pane-analytics').classList.add('active-pane');
       if (typeof loadAnalyticsData === 'function') {
         loadAnalyticsData();
