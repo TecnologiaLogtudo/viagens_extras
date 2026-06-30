@@ -28,7 +28,7 @@ function updateConfirmedVehiclesAndDrivers(reqId, defaultVehicleTypes, defaultDr
   for (let i = 0; i < qty; i++) {
     const row = document.createElement('div');
     row.style.display = 'grid';
-    row.style.gridTemplateColumns = '1fr 1fr';
+    row.style.gridTemplateColumns = '1fr';
     row.style.gap = '0.5rem';
     row.style.border = '1px solid #e2e8f0';
     row.style.padding = '0.8rem';
@@ -178,69 +178,109 @@ function validateTriageForm(form) {
           </form>
           {% endif %}
 
-          {% if req.status.value in ['submitted','triage'] %}
-          <details>
-            <summary>Triagem</summary>
-            <div class="hint-box" style="margin: 0.5rem 0 1rem; border: 1px solid #d0e2ff; background: #f0f7ff; color: #002d70; padding: 0.8rem; border-radius: 8px;">
-              <div style="font-weight: 800; text-transform: uppercase; font-size: 0.7rem; margin-bottom: 0.4rem; opacity: 0.8;">Solicitação Original:</div>
-              <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.4rem; font-size: 0.85rem;">
-                <div class="full" style="grid-column: 1 / -1;"><strong>Tipo:</strong> {{ req.request_type }}</div>
-                <div><strong>Qtd:</strong> {{ req.quantity }}</div>
-                <div><strong>Veículo:</strong> {{ req.vehicle_type_requested }}</div>
-                <div class="full" style="grid-column: 1 / -1;"><strong>Origem / Destino:</strong> {{ req.origin }} &rarr; {{ req.destination }}</div>
-                <div class="full" style="grid-column: 1 / -1;"><strong>Data/Hora:</strong> {{ req.requested_datetime | local_time }}</div>
-                {% if req.reason %}<div class="full" style="grid-column: 1 / -1;"><strong>Motivo:</strong> {{ req.reason }}</div>{% endif %}
-                {% if req.notes %}<div class="full" style="grid-column: 1 / -1;"><strong>Notas:</strong> {{ req.notes }}</div>{% endif %}
-              </div>
-            </div>
-
-            <form class="form-grid" method="post" action="/empresa/requests/{{ req.id }}/triage" onsubmit="return validateTriageForm(this);">
-              <label>Decisão
-                <select name="decision_type" required>
-                  <option value="confirm" {% if conf and conf.decision_type.value == 'confirm' %}selected{% endif %}>Confirmar</option>
-                  <option value="partial" {% if conf and conf.decision_type.value == 'partial' %}selected{% endif %}>Parcial</option>
-                  <option value="alternative" {% if conf and conf.decision_type.value == 'alternative' %}selected{% endif %}>Alternativa</option>
-                  <option value="refuse" {% if conf and conf.decision_type.value == 'refuse' %}selected{% endif %}>Recusar</option>
-                </select>
-              </label>
-              <label>Qtd. Aprovada
-                <input type="number" name="approved_quantity" data-req-id="{{ req.id }}" value="{{ conf.approved_quantity if conf else req.quantity }}" min="1" required oninput="updateConfirmedVehiclesAndDrivers({{ req.id }})" />
-              </label>
-              <label>Data/Hora Confirmada
-                <input type="datetime-local" name="confirmed_datetime" value="{{ conf.confirmed_datetime | local_time_input if conf else req.requested_datetime | local_time_input }}" required />
-              </label>
-              <div id="confirmed-vehicles-drivers-container-{{ req.id }}" class="full" style="display: grid; grid-template-columns: 1fr; gap: 0.5rem;">
-                <!-- Dynamically generated selects go here -->
-              </div>
-              <script>
-                window['drivers_' + {{ req.id }}] = [
-                  {% for d in driver_rows %}
-                    {% if d.base_id == req.base_id %}
-                      {id: {{ d.id }}, name: {{ d.name | tojson }}, plate: {{ (d.vehicle.plate if d.vehicle else "") | tojson }}},
-                    {% endif %}
-                  {% endfor %}
-                ];
-                updateConfirmedVehiclesAndDrivers({{ req.id }}, '{{ conf.confirmed_vehicle_type if conf else req.vehicle_type_requested }}', '{{ conf.driver_ids if conf and conf.driver_ids else (conf.driver_id if conf and conf.driver_id else "") }}');
-              </script>
-              {% if req.request_type == 'Cotação de preço' %}
-              <label>Valor Tarifa (R$)
-                <input type="number" step="0.01" name="tariff_value" value="{{ conf.tariff_value if conf else '0.00' }}" required />
-              </label>
-              {% else %}
-              <input type="hidden" name="tariff_value" value="0.00" />
-              {% endif %}
-              <label>Observações
-                <input name="observations" value="{{ conf.observations if conf else '' }}" placeholder="observações para o parceiro" />
-              </label>
-              <label class="full">Motivo Recusa (se recusar)
-                <input name="refusal_reason" placeholder="obrigatório apenas se a decisão for 'Recusar'" />
-              </label>
-              <button class="full" type="submit">{% if req.status.value == 'completed' %}Salvar Alterações{% else %}Aplicar Triagem{% endif %}</button>
-            </form>
-          </details>
-          {% endif %}
         </td>
       </tr>
+
+      {% if req.status.value in ['submitted','triage'] %}
+      <tr style="background: #f8fafc;">
+        <td colspan="7" style="padding: 0.5rem 1rem 1rem;">
+          <details style="width: 100%; border: 1px solid var(--line, #e2e8f0); border-radius: 8px; padding: 0.8rem; background: #ffffff;">
+            <summary style="font-weight: bold; cursor: pointer; color: var(--accent, #ff8c00); font-size: 0.9rem; outline: none; margin-bottom: 0.5rem;">Triagem de {{ req.protocol }}</summary>
+            
+            <form method="post" action="/empresa/requests/{{ req.id }}/triage" onsubmit="return validateTriageForm(this);" style="margin-top: 0.8rem;">
+              
+              <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 1rem; align-items: start;">
+                
+                <!-- Coluna 1: Solicitação Original -->
+                <div class="hint-box" style="margin: 0; border: 1px solid #d0e2ff; background: #f0f7ff; color: #002d70; padding: 0.8rem; border-radius: 8px; font-size: 0.8rem;">
+                  <div style="font-weight: 800; text-transform: uppercase; font-size: 0.7rem; margin-bottom: 0.5rem; opacity: 0.8;">Solicitação Original</div>
+                  <div style="display: flex; flex-direction: column; gap: 0.3rem;">
+                    <div><strong>Tipo:</strong> {{ req.request_type }}</div>
+                    <div><strong>Qtd:</strong> {{ req.quantity }}</div>
+                    <div><strong>Veículo:</strong> {{ req.vehicle_type_requested }}</div>
+                    <div style="word-break: break-all;"><strong>Origem/Destino:</strong><br/>{{ req.origin }} &rarr; {{ req.destination }}</div>
+                    <div><strong>Data/Hora:</strong> {{ req.requested_datetime | local_time }}</div>
+                    {% if req.reason %}<div><strong>Motivo:</strong> {{ req.reason }}</div>{% endif %}
+                    {% if req.notes %}<div><strong>Notas:</strong> {{ req.notes }}</div>{% endif %}
+                  </div>
+                </div>
+
+                <!-- Coluna 2: Resposta -->
+                <div style="display: flex; flex-direction: column; gap: 0.6rem; background: #f8fafc; border: 1px solid #e2e8f0; padding: 0.8rem; border-radius: 8px;">
+                  <div style="font-weight: 800; text-transform: uppercase; font-size: 0.7rem; opacity: 0.8; margin-bottom: 0.2rem; color: #475569;">Resposta</div>
+                  
+                  <label style="display: flex; flex-direction: column; font-size: 0.75rem; font-weight: bold; gap: 0.2rem;">Decisão
+                    <select name="decision_type" style="padding: 0.3rem; font-size: 0.8rem; border-radius: 6px; border: 1px solid #cbd5e1; background: #fff;" required>
+                      <option value="confirm" {% if conf and conf.decision_type.value == 'confirm' %}selected{% endif %}>Confirmar</option>
+                      <option value="partial" {% if conf and conf.decision_type.value == 'partial' %}selected{% endif %}>Parcial</option>
+                      <option value="alternative" {% if conf and conf.decision_type.value == 'alternative' %}selected{% endif %}>Alternativa</option>
+                      <option value="refuse" {% if conf and conf.decision_type.value == 'refuse' %}selected{% endif %}>Recusar</option>
+                    </select>
+                  </label>
+
+                  <label style="display: flex; flex-direction: column; font-size: 0.75rem; font-weight: bold; gap: 0.2rem;">Qtd. Aprovada
+                    <input type="number" name="approved_quantity" data-req-id="{{ req.id }}" value="{{ conf.approved_quantity if conf else req.quantity }}" min="1" style="padding: 0.3rem; font-size: 0.8rem; border-radius: 6px; border: 1px solid #cbd5e1;" required oninput="updateConfirmedVehiclesAndDrivers({{ req.id }})" />
+                  </label>
+
+                  <label style="display: flex; flex-direction: column; font-size: 0.75rem; font-weight: bold; gap: 0.2rem;">Data/Hora Confirmada
+                    <input type="datetime-local" name="confirmed_datetime" value="{{ conf.confirmed_datetime | local_time_input if conf else req.requested_datetime | local_time_input }}" style="padding: 0.3rem; font-size: 0.8rem; border-radius: 6px; border: 1px solid #cbd5e1;" required />
+                  </label>
+
+                  {% if req.request_type == 'Cotação de preço' %}
+                  <label style="display: flex; flex-direction: column; font-size: 0.75rem; font-weight: bold; gap: 0.2rem;">Valor Tarifa (R$)
+                    <input type="number" step="0.01" name="tariff_value" value="{{ conf.tariff_value if conf else '0.00' }}" style="padding: 0.3rem; font-size: 0.8rem; border-radius: 6px; border: 1px solid #cbd5e1;" required />
+                  </label>
+                  {% else %}
+                  <input type="hidden" name="tariff_value" value="0.00" />
+                  {% endif %}
+                </div>
+
+                <!-- Coluna 3: Veículo / Motorista -->
+                <div style="display: flex; flex-direction: column; gap: 0.6rem; background: #f8fafc; border: 1px solid #e2e8f0; padding: 0.8rem; border-radius: 8px;">
+                  <div style="font-weight: 800; text-transform: uppercase; font-size: 0.7rem; opacity: 0.8; margin-bottom: 0.2rem; color: #475569;">Veículo / Motorista</div>
+                  
+                  <div id="confirmed-vehicles-drivers-container-{{ req.id }}" style="display: flex; flex-direction: column; gap: 0.5rem; max-height: 250px; overflow-y: auto; padding-right: 0.2rem;">
+                    <!-- Dynamically generated selects go here -->
+                  </div>
+                  
+                  <script>
+                    window['drivers_' + {{ req.id }}] = [
+                      {% for d in driver_rows %}
+                        {% if d.base_id == req.base_id %}
+                          {id: {{ d.id }}, name: {{ d.name | tojson }}, plate: {{ (d.vehicle.plate if d.vehicle else "") | tojson }}},
+                        {% endif %}
+                      {% endfor %}
+                    ];
+                    updateConfirmedVehiclesAndDrivers({{ req.id }}, '{{ conf.confirmed_vehicle_type if conf else req.vehicle_type_requested }}', '{{ conf.driver_ids if conf and conf.driver_ids else (conf.driver_id if conf and conf.driver_id else "") }}');
+                  </script>
+                </div>
+
+                <!-- Coluna 4: Observações / Motivos -->
+                <div style="display: flex; flex-direction: column; gap: 0.6rem; background: #f8fafc; border: 1px solid #e2e8f0; padding: 0.8rem; border-radius: 8px; justify-content: space-between; height: 100%; min-height: 220px;">
+                  <div style="display: flex; flex-direction: column; gap: 0.6rem;">
+                    <div style="font-weight: 800; text-transform: uppercase; font-size: 0.7rem; opacity: 0.8; color: #475569;">Observações / Motivos</div>
+                    
+                    <label style="display: flex; flex-direction: column; font-size: 0.75rem; font-weight: bold; gap: 0.2rem;">Observações
+                      <input name="observations" value="{{ conf.observations if conf else '' }}" placeholder="observações para o parceiro" style="padding: 0.3rem; font-size: 0.8rem; border-radius: 6px; border: 1px solid #cbd5e1;" />
+                    </label>
+
+                    <label style="display: flex; flex-direction: column; font-size: 0.75rem; font-weight: bold; gap: 0.2rem;">Motivo Recusa (se recusar)
+                      <input name="refusal_reason" placeholder="obrigatório se recusar" style="padding: 0.3rem; font-size: 0.8rem; border-radius: 6px; border: 1px solid #cbd5e1;" />
+                    </label>
+                  </div>
+                  
+                  <button type="submit" class="button-like" style="background: var(--accent, #ff8c00); color: white; border: none; padding: 0.5rem; border-radius: 6px; font-weight: bold; cursor: pointer; font-size: 0.85rem; width: 100%; margin-top: auto;">
+                    {% if req.status.value == 'completed' %}Salvar Alterações{% else %}Aplicar Triagem{% endif %}
+                  </button>
+                </div>
+
+              </div>
+
+            </form>
+          </details>
+        </td>
+      </tr>
+      {% endif %}
       {% endfor %}
       </tbody>
     </table>
