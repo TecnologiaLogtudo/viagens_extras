@@ -53,6 +53,27 @@
       container.appendChild(label);
     }
   }
+
+  function confirmDecline(form) {
+    const reason = prompt("Por favor, informe o motivo para declinar esta cotação:");
+    if (reason === null) {
+      return false; // User cancelled the prompt
+    }
+    const trimmed = reason.trim();
+    if (!trimmed) {
+      alert("O motivo para declinar é obrigatório.");
+      return false;
+    }
+    let input = form.querySelector('input[name="reason"]');
+    if (!input) {
+      input = document.createElement('input');
+      input.type = 'hidden';
+      input.name = 'reason';
+      form.appendChild(input);
+    }
+    input.value = trimmed;
+    return true;
+  }
 </script>
 
   <div class="table-wrap">
@@ -161,7 +182,7 @@
                   <form method="post" action="/partner/requests/{{ req.id }}/accept-quote" style="margin: 0;">
                     <button type="submit" class="button-like" style="background: var(--success, #2ec4b6); color: white; border: none; padding: 0.4rem 0.6rem; border-radius: 4px; font-size: 0.85rem; cursor: pointer; font-weight: bold;">Aceitar</button>
                   </form>
-                  <form method="post" action="/partner/requests/{{ req.id }}/decline-quote" style="margin: 0;">
+                  <form method="post" action="/partner/requests/{{ req.id }}/decline-quote" onsubmit="return confirmDecline(this);" style="margin: 0;">
                     <button type="submit" class="button-like" style="background: var(--danger, #e63946); color: white; border: none; padding: 0.4rem 0.6rem; border-radius: 4px; font-size: 0.85rem; cursor: pointer; font-weight: bold;">Declinar</button>
                   </form>
                 </div>

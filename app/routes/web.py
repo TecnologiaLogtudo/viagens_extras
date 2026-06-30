@@ -1401,7 +1401,10 @@ def format_event_log(event: EventLog, actor: User | None, request: TravelRequest
             decision = "recusada"
         description = f"Triagem realizada pelo Supervisor: solicitação {decision}."
     elif event_type == "request_refused":
-        description = f"Solicitação recusada na triagem. Motivo: {payload}"
+        if actor and actor.role.value == "partner_requester":
+            description = f"Cotação declinada pelo parceiro. Motivo: {payload}"
+        else:
+            description = f"Solicitação recusada na triagem. Motivo: {payload}"
         category = "Alerta"
         category_class = "log-alert"
     elif event_type == "request_modified_by_partner":
@@ -2765,6 +2768,7 @@ def accept_partner_quote(
 @router.post("/partner/requests/{request_id}/decline-quote")
 def decline_partner_quote(
     request_id: int,
+    reason: str = Form(...),
     session: Session = Depends(get_session),
     user: User = Depends(partner_only),
 ):
@@ -2775,11 +2779,15 @@ def decline_partner_quote(
     if req.status != RequestStatus.CONFIRMED or req.request_type != "Cotação de preço":
         raise HTTPException(status_code=400, detail="Esta solicitação não é uma cotação pendente de aceite.")
     
+    reason_clean = reason.strip()
+    if not reason_clean:
+        raise HTTPException(status_code=400, detail="O motivo para declinar é obrigatório.")
+        
     req.status = RequestStatus.REFUSED
     req.updated_at = now_utc()
     session.add(req)
     
-    log_event(session, req.id, user.id, "request_refused", "Partner declined quote.")
+    log_event(session, req.id, user.id, "request_refused", reason_clean)
     session.commit()
     
     return _redirect("/partner?message=Cotação+recusada+com+sucesso.")

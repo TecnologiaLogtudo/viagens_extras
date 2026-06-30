@@ -1158,12 +1158,21 @@ def test_web_quote_flow_decline(client: TestClient):
 
     # Login as partner and decline quote
     login(client, "parceiro@logtudo.local", "parceiro123")
-    resp = client.post(f"/partner/requests/{req_id}/decline-quote", follow_redirects=False)
+    
+    # Assert validation error if reason is missing or empty
+    resp_err = client.post(f"/partner/requests/{req_id}/decline-quote", data={"reason": ""}, follow_redirects=False)
+    assert resp_err.status_code == 400
+    
+    resp = client.post(f"/partner/requests/{req_id}/decline-quote", data={"reason": "Preço acima do orçamento"}, follow_redirects=False)
     assert resp.status_code == 303
 
     with Session(engine) as session:
         req = session.get(TravelRequest, req_id)
         assert req.status == RequestStatus.REFUSED
+        from app.models import EventLog
+        log = session.exec(select(EventLog).where(EventLog.request_id == req_id).where(EventLog.event_type == "request_refused")).first()
+        assert log is not None
+        assert log.payload == "Preço acima do orçamento"
 
 
 def test_sse_endpoint_behavior_and_headers(client: TestClient):
