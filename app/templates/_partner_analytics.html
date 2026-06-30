@@ -1,0 +1,491 @@
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+<div class="panel" style="display: grid; grid-template-columns: 1fr; gap: 1.5rem;">
+  
+  <!-- Filter Panel -->
+  <div class="card" style="background: #ffffff; border-radius: 12px; border: 1px solid #e2e8f0; padding: 1.5rem;">
+    <h3 style="margin-top: 0; color: #0f172a; display: flex; align-items: center; gap: 0.5rem; font-size: 1.1rem;">
+      <svg viewBox="0 0 24 24" width="18" height="18" stroke="currentColor" stroke-width="2.5" fill="none" stroke-linecap="round" stroke-linejoin="round" style="color: #3b82f6;"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"></polygon></svg>
+      Filtros de Análise
+    </h3>
+    
+    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 1rem; margin-top: 1rem;">
+      <label style="display: flex; flex-direction: column; font-size: 0.8rem; font-weight: 600; color: #475569; gap: 0.25rem;">
+        Ano
+        <select id="filter-year" onchange="loadAnalyticsData()" style="padding: 0.5rem; border-radius: 6px; border: 1px solid #cbd5e1; outline: none; font-size: 0.85rem; width: 100%;">
+          <!-- Populated dynamically -->
+        </select>
+      </label>
+      
+      <label style="display: flex; flex-direction: column; font-size: 0.8rem; font-weight: 600; color: #475569; gap: 0.25rem;">
+        Mês
+        <select id="filter-month" onchange="loadAnalyticsData()" style="padding: 0.5rem; border-radius: 6px; border: 1px solid #cbd5e1; outline: none; font-size: 0.85rem; width: 100%;">
+          <option value="">Todos</option>
+          <option value="1">Janeiro</option>
+          <option value="2">Fevereiro</option>
+          <option value="3">Março</option>
+          <option value="4">Abril</option>
+          <option value="5">Maio</option>
+          <option value="6">Junho</option>
+          <option value="7">Julho</option>
+          <option value="8">Agosto</option>
+          <option value="9">Setembro</option>
+          <option value="10">Outubro</option>
+          <option value="11">Novembro</option>
+          <option value="12">Dezembro</option>
+        </select>
+      </label>
+      
+      <label style="display: flex; flex-direction: column; font-size: 0.8rem; font-weight: 600; color: #475569; gap: 0.25rem;">
+        Base
+        <select id="filter-base" onchange="loadAnalyticsData()" style="padding: 0.5rem; border-radius: 6px; border: 1px solid #cbd5e1; outline: none; font-size: 0.85rem; width: 100%;">
+          <option value="">Todas as Bases</option>
+          {% for base in user.bases %}
+          <option value="{{ base.id }}">{{ base.name }} - {{ base.location }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      
+      <label style="display: flex; flex-direction: column; font-size: 0.8rem; font-weight: 600; color: #475569; gap: 0.25rem;">
+        Status
+        <select id="filter-status" onchange="loadAnalyticsData()" style="padding: 0.5rem; border-radius: 6px; border: 1px solid #cbd5e1; outline: none; font-size: 0.85rem; width: 100%;">
+          <option value="">Todos</option>
+          <option value="submitted">Enviado</option>
+          <option value="triage">Em triagem</option>
+          <option value="confirmed">Confirmação pendente de aceite</option>
+          <option value="accepted">Aceito</option>
+          <option value="in_execution">Em execução</option>
+          <option value="completed">Concluído</option>
+          <option value="refused">Recusado</option>
+          <option value="canceled">Cancelado</option>
+        </select>
+      </label>
+    </div>
+  </div>
+
+  <!-- Metric Cards -->
+  <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 1.5rem;">
+    <!-- Card 1 -->
+    <div class="card" style="background: linear-gradient(135deg, #eff6ff, #dbeafe); border: 1px solid #bfdbfe; border-radius: 12px; padding: 1.5rem; display: flex; align-items: center; justify-content: space-between; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05);">
+      <div>
+        <p style="margin: 0; font-size: 0.85rem; font-weight: bold; color: #1e3a8a; text-transform: uppercase; letter-spacing: 0.05em;">Total de Solicitações</p>
+        <h2 id="kpi-total-requests" style="margin: 0.5rem 0 0; font-size: 2.2rem; font-weight: 800; color: #1e40af;">0</h2>
+      </div>
+      <div style="background: rgba(59, 130, 246, 0.15); border-radius: 50%; padding: 0.75rem; color: #2563eb; display: flex; align-items: center; justify-content: center;">
+        <svg viewBox="0 0 24 24" width="24" height="24" stroke="currentColor" stroke-width="2.5" fill="none" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+      </div>
+    </div>
+    
+    <!-- Card 2 -->
+    <div class="card" style="background: linear-gradient(135deg, #f0fdf4, #dcfce7); border: 1px solid #bbf7d0; border-radius: 12px; padding: 1.5rem; display: flex; align-items: center; justify-content: space-between; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05);">
+      <div>
+        <p style="margin: 0; font-size: 0.85rem; font-weight: bold; color: #14532d; text-transform: uppercase; letter-spacing: 0.05em;">Conversão de Cotações</p>
+        <h2 id="kpi-conversion-rate" style="margin: 0.5rem 0 0; font-size: 2.2rem; font-weight: 800; color: #15803d;">0.0%</h2>
+        <span id="kpi-quote-details" style="font-size: 0.75rem; color: #166534; font-weight: 600;">(0 de 0 cotações)</span>
+      </div>
+      <div style="background: rgba(34, 197, 94, 0.15); border-radius: 50%; padding: 0.75rem; color: #16a34a; display: flex; align-items: center; justify-content: center;">
+        <svg viewBox="0 0 24 24" width="24" height="24" stroke="currentColor" stroke-width="2.5" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline></svg>
+      </div>
+    </div>
+  </div>
+
+  <!-- Charts Grid -->
+  <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 1.5rem;">
+    <!-- Chart 1: Status Distribution -->
+    <div class="card" style="background: #ffffff; border-radius: 12px; border: 1px solid #e2e8f0; padding: 1.5rem; display: flex; flex-direction: column; min-height: 320px;">
+      <h4 style="margin: 0 0 1rem; color: #1e293b; font-size: 0.95rem;">Distribuição por Status</h4>
+      <div style="flex: 1; position: relative; display: flex; align-items: center; justify-content: center;">
+        <canvas id="chart-status" style="max-height: 240px;"></canvas>
+      </div>
+    </div>
+    
+    <!-- Chart 2: Monthly Volume -->
+    <div class="card" style="background: #ffffff; border-radius: 12px; border: 1px solid #e2e8f0; padding: 1.5rem; display: flex; flex-direction: column; min-height: 320px;">
+      <h4 style="margin: 0 0 1rem; color: #1e293b; font-size: 0.95rem;">Histórico Mensal de Volume</h4>
+      <div style="flex: 1; position: relative;">
+        <canvas id="chart-volume" style="max-height: 240px;"></canvas>
+      </div>
+    </div>
+    
+    <!-- Chart 3: Base Distribution -->
+    <div class="card" style="background: #ffffff; border-radius: 12px; border: 1px solid #e2e8f0; padding: 1.5rem; display: flex; flex-direction: column; min-height: 320px;">
+      <h4 style="margin: 0 0 1rem; color: #1e293b; font-size: 0.95rem;">Volume por Base</h4>
+      <div style="flex: 1; position: relative;">
+        <canvas id="chart-bases" style="max-height: 240px;"></canvas>
+      </div>
+    </div>
+  </div>
+
+  <!-- Data Table Section -->
+  <div class="card" style="background: #ffffff; border-radius: 12px; border: 1px solid #e2e8f0; padding: 1.5rem;">
+    <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 1rem; margin-bottom: 1.5rem;">
+      <h3 style="margin: 0; color: #0f172a; font-size: 1.1rem; display: flex; align-items: center; gap: 0.5rem;">
+        <svg viewBox="0 0 24 24" width="18" height="18" stroke="currentColor" stroke-width="2.5" fill="none" stroke-linecap="round" stroke-linejoin="round" style="color: #3b82f6;"><line x1="8" y1="6" x2="21" y2="6"></line><line x1="8" y1="12" x2="21" y2="12"></line><line x1="8" y1="18" x2="21" y2="18"></line><line x1="3" y1="6" x2="3.01" y2="6"></line><line x1="3" y1="12" x2="3.01" y2="12"></line><line x1="3" y1="18" x2="3.01" y2="18"></line></svg>
+        Detalhamento das Solicitações
+      </h3>
+      
+      <div style="display: flex; gap: 0.75rem; flex-wrap: wrap;">
+        <input type="text" id="search-input" oninput="filterTableData()" placeholder="Buscar por protocolo, origem ou destino..." style="padding: 0.5rem 1rem; border-radius: 6px; border: 1px solid #cbd5e1; font-size: 0.85rem; min-width: 260px; outline: none;" />
+        
+        <button onclick="exportCSV()" class="button-like" style="background: #10b981; color: white; border: none; padding: 0.5rem 1rem; border-radius: 6px; font-size: 0.85rem; font-weight: 600; cursor: pointer; display: inline-flex; align-items: center; gap: 0.4rem; transition: background 0.2s;">
+          <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2.5" fill="none" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+          Exportar CSV
+        </button>
+      </div>
+    </div>
+
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th style="white-space: nowrap; width: 120px;">Protocolo</th>
+            <th style="white-space: nowrap; width: 140px;">Solicitado em</th>
+            <th style="white-space: nowrap; width: 140px;">Data Agendamento</th>
+            <th>Tipo</th>
+            <th style="width: 120px;">Status</th>
+            <th style="white-space: nowrap; width: 140px;">Base</th>
+            <th>Ações</th>
+          </tr>
+        </thead>
+        <tbody id="analytics-table-body">
+          <!-- Rows injected via JavaScript -->
+        </tbody>
+      </table>
+    </div>
+    
+    <!-- Client-side pagination container -->
+    <div id="analytics-pagination" style="display: flex; justify-content: space-between; align-items: center; margin-top: 1rem; font-size: 0.85rem; color: #64748b;">
+      <span id="pagination-info">Mostrando 0 de 0 registros</span>
+      <div style="display: flex; gap: 0.5rem;">
+        <button id="btn-prev-page" onclick="prevPage()" class="button-like" style="padding: 0.35rem 0.75rem; border-radius: 4px; border: 1px solid #cbd5e1; background: white; cursor: pointer; font-weight: 600;">Anterior</button>
+        <button id="btn-next-page" onclick="nextPage()" class="button-like" style="padding: 0.35rem 0.75rem; border-radius: 4px; border: 1px solid #cbd5e1; background: white; cursor: pointer; font-weight: 600;">Próxima</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+  let rawRequests = [];
+  let displayedRequests = [];
+  let currentPage = 1;
+  const itemsPerPage = 10;
+  
+  // Chart instances
+  let statusChart = null;
+  let volumeChart = null;
+  let basesChart = null;
+
+  async function loadAnalyticsData() {
+    const yearSelect = document.getElementById('filter-year');
+    const year = yearSelect.value || "";
+    const month = document.getElementById('filter-month').value;
+    const baseId = document.getElementById('filter-base').value;
+    const status = document.getElementById('filter-status').value;
+    
+    let url = `/partner/analytics/data?`;
+    if (year) url += `year=${year}&`;
+    if (month) url += `month=${month}&`;
+    if (baseId) url += `base_id=${baseId}&`;
+    if (status) url += `status=${status}&`;
+    
+    try {
+      const response = await fetch(url);
+      const data = await response.json();
+      
+      // Populate available years selector if not done yet
+      if (yearSelect.options.length === 0 && data.available_years) {
+        data.available_years.forEach(yr => {
+          const opt = document.createElement('option');
+          opt.value = yr;
+          opt.textContent = yr;
+          yearSelect.appendChild(opt);
+        });
+        // Default to current year
+        const currentYear = new Date().getFullYear();
+        if (data.available_years.includes(currentYear)) {
+          yearSelect.value = currentYear;
+        } else if (data.available_years.length > 0) {
+          yearSelect.value = data.available_years[0];
+        }
+        
+        // Reload data if the year selector had to be initialized
+        if (yearSelect.value !== year) {
+          return loadAnalyticsData();
+        }
+      }
+      
+      // Update KPIs
+      document.getElementById('kpi-total-requests').textContent = data.metrics.total_requests;
+      document.getElementById('kpi-conversion-rate').textContent = data.metrics.quote_conversion_rate + '%';
+      document.getElementById('kpi-quote-details').textContent = `(${data.metrics.quotes_converted} de ${data.metrics.quotes_total} cotações)`;
+      
+      // Populate data table
+      rawRequests = data.requests || [];
+      displayedRequests = [...rawRequests];
+      currentPage = 1;
+      
+      filterTableData(); // This will apply search + render table
+      
+      // Render Charts
+      renderStatusChart(data.charts.status_distribution);
+      renderVolumeChart(data.charts.monthly_volume);
+      renderBasesChart(data.charts.base_distribution);
+      
+    } catch (err) {
+      console.error("Erro ao carregar dados analíticos:", err);
+    }
+  }
+  
+  function filterTableData() {
+    const searchVal = document.getElementById('search-input').value.toLowerCase().trim();
+    if (searchVal) {
+      displayedRequests = rawRequests.filter(r => 
+        r.protocol.toLowerCase().includes(searchVal) ||
+        r.origin.toLowerCase().includes(searchVal) ||
+        r.destination.toLowerCase().includes(searchVal)
+      );
+    } else {
+      displayedRequests = [...rawRequests];
+    }
+    currentPage = 1;
+    renderTable();
+  }
+  
+  function renderTable() {
+    const tbody = document.getElementById('analytics-table-body');
+    if (!tbody) return;
+    
+    tbody.innerHTML = '';
+    
+    const totalItems = displayedRequests.length;
+    const totalPages = Math.ceil(totalItems / itemsPerPage) || 1;
+    
+    if (currentPage > totalPages) currentPage = totalPages;
+    if (currentPage < 1) currentPage = 1;
+    
+    const startIdx = (currentPage - 1) * itemsPerPage;
+    const endIdx = Math.min(startIdx + itemsPerPage, totalItems);
+    
+    const pageItems = displayedRequests.slice(startIdx, endIdx);
+    
+    if (pageItems.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="7" class="muted" style="text-align: center; padding: 2rem;">Nenhuma solicitação encontrada para os filtros selecionados.</td></tr>';
+    } else {
+      pageItems.forEach(r => {
+        const tr = document.createElement('tr');
+        
+        // Comprovante button conditionally rendered if status completed/accepted etc.
+        let comprovanteAction = '';
+        const acceptedStatuses = ['accepted', 'in_execution', 'completed', 'confirmed'];
+        const isQuote = r.request_type === 'Cotação de preço';
+        
+        if (acceptedStatuses.includes(r.status) && !(r.status === 'confirmed' && isQuote)) {
+          comprovanteAction = `
+            <a href="/requests/${r.id}/comprovante" class="button-like download-btn" target="_blank" style="background: #2ec4b6; color: white; padding: 0.3rem 0.5rem; text-decoration: none; border-radius: 4px; font-size: 0.75rem; display: inline-flex; align-items: center; gap: 0.2rem; margin-top: 2px;">
+              Comprovante
+            </a>
+          `;
+        }
+        
+        tr.innerHTML = `
+          <td style="white-space: nowrap; font-family: monospace; font-weight: bold;">${r.protocol}</td>
+          <td style="white-space: nowrap;">${r.created_at}</td>
+          <td style="white-space: nowrap;">${r.requested_datetime}</td>
+          <td>${r.request_type}</td>
+          <td style="white-space: nowrap;"><span class="pill ${r.status}">${r.status_label}</span></td>
+          <td style="white-space: nowrap;">${r.base_name}</td>
+          <td>
+            <div style="display: flex; gap: 0.3rem; flex-wrap: wrap;">
+              <a href="/partner?selected_request_id=${r.id}" onclick="switchTab('operations')" class="button-like" style="padding: 0.3rem 0.5rem; font-size: 0.75rem; background: #3b82f6; color: white; border-radius: 4px; text-decoration: none;">Ver no Painel</a>
+              ${comprovanteAction}
+            </div>
+          </td>
+        `;
+        tbody.appendChild(tr);
+      });
+    }
+    
+    // Update pagination controls
+    document.getElementById('pagination-info').textContent = totalItems > 0 
+      ? `Mostrando ${startIdx + 1}-${endIdx} de ${totalItems} registros`
+      : 'Mostrando 0 de 0 registros';
+      
+    document.getElementById('btn-prev-page').disabled = currentPage === 1;
+    document.getElementById('btn-next-page').disabled = currentPage === totalPages;
+  }
+  
+  function prevPage() {
+    if (currentPage > 1) {
+      currentPage--;
+      renderTable();
+    }
+  }
+  
+  function nextPage() {
+    const totalPages = Math.ceil(displayedRequests.length / itemsPerPage) || 1;
+    if (currentPage < totalPages) {
+      currentPage++;
+      renderTable();
+    }
+  }
+  
+  function exportCSV() {
+    const year = document.getElementById('filter-year').value;
+    const month = document.getElementById('filter-month').value;
+    const baseId = document.getElementById('filter-base').value;
+    const status = document.getElementById('filter-status').value;
+    
+    let url = `/partner/analytics/export?`;
+    if (year) url += `year=${year}&`;
+    if (month) url += `month=${month}&`;
+    if (baseId) url += `base_id=${baseId}&`;
+    if (status) url += `status=${status}&`;
+    
+    window.location.href = url;
+  }
+
+  // --- Charts Rendering Functions ---
+  
+  function renderStatusChart(statusData) {
+    const ctx = document.getElementById('chart-status').getContext('2d');
+    if (statusChart) statusChart.destroy();
+    
+    const labels = statusData.labels || [];
+    const data = statusData.data || [];
+    
+    if (labels.length === 0) {
+      // Empty placeholder state
+      statusChart = new Chart(ctx, {
+        type: 'doughnut',
+        data: {
+          labels: ['Sem dados'],
+          datasets: [{ data: [1], backgroundColor: ['#e2e8f0'] }]
+        },
+        options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } } }
+      });
+      return;
+    }
+
+    // Modern color palette
+    const colors = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#06b6d4', '#64748b'];
+    
+    statusChart = new Chart(ctx, {
+      type: 'doughnut',
+      data: {
+        labels: labels,
+        datasets: [{
+          data: data,
+          backgroundColor: colors.slice(0, labels.length),
+          borderWidth: 2,
+          borderColor: '#ffffff'
+        }]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+          legend: {
+            position: 'bottom',
+            labels: { boxWidth: 12, font: { family: 'Plus Jakarta Sans', size: 10 } }
+          }
+        },
+        cutout: '65%'
+      }
+    });
+  }
+
+  function renderVolumeChart(volumeData) {
+    const ctx = document.getElementById('chart-volume').getContext('2d');
+    if (volumeChart) volumeChart.destroy();
+    
+    const labels = volumeData.labels || [];
+    const data = volumeData.data || [];
+    
+    volumeChart = new Chart(ctx, {
+      type: 'line',
+      data: {
+        labels: labels,
+        datasets: [{
+          label: 'Solicitações',
+          data: data,
+          borderColor: '#3b82f6',
+          backgroundColor: 'rgba(59, 130, 246, 0.1)',
+          fill: true,
+          tension: 0.3,
+          borderWidth: 2.5
+        }]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: { legend: { display: false } },
+        scales: {
+          y: {
+            beginAtZero: true,
+            ticks: { stepSize: 1, font: { family: 'Plus Jakarta Sans', size: 10 } },
+            grid: { color: '#f1f5f9' }
+          },
+          x: {
+            ticks: { font: { family: 'Plus Jakarta Sans', size: 10 } },
+            grid: { display: false }
+          }
+        }
+      }
+    });
+  }
+
+  function renderBasesChart(basesData) {
+    const ctx = document.getElementById('chart-bases').getContext('2d');
+    if (basesChart) basesChart.destroy();
+    
+    const labels = basesData.labels || [];
+    const data = basesData.data || [];
+    
+    if (labels.length === 0) {
+      basesChart = new Chart(ctx, {
+        type: 'bar',
+        data: {
+          labels: ['Sem dados'],
+          datasets: [{ data: [0], backgroundColor: ['#cbd5e1'] }]
+        },
+        options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } } }
+      });
+      return;
+    }
+    
+    // Shorten base labels for visual clarity
+    const shortLabels = labels.map(lbl => {
+      const parts = lbl.split(' - ');
+      return parts[0];
+    });
+
+    basesChart = new Chart(ctx, {
+      type: 'bar',
+      data: {
+        labels: shortLabels,
+        datasets: [{
+          data: data,
+          backgroundColor: '#3b82f6',
+          borderRadius: 4,
+          maxBarThickness: 32
+        }]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: { legend: { display: false } },
+        scales: {
+          y: {
+            beginAtZero: true,
+            ticks: { stepSize: 1, font: { family: 'Plus Jakarta Sans', size: 10 } },
+            grid: { color: '#f1f5f9' }
+          },
+          x: {
+            ticks: { font: { family: 'Plus Jakarta Sans', size: 10 } },
+            grid: { display: false }
+          }
+        }
+      }
+    });
+  }
+</script>

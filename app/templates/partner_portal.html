@@ -8,56 +8,137 @@
   {% endif %}
 </section>
 
-<section class="panel split">
-  <article class="card">
-    <h3>Nova solicitação</h3>
-    <form class="form-grid" method="post" action="/partner/requests/new">
-      <label>Base
-        <select name="base_id" required>
-          {% for base in user.bases %}
-          <option value="{{ base.id }}">{{ base.name }} - {{ base.location }}</option>
-          {% endfor %}
-        </select>
-      </label>
-      <label>Tipo
-        <select name="request_type" required>
-          <option value="Viagem extra NILO">Viagem extra NILO</option>
-          <option value="Carro dedicado">Carro dedicado</option>
-          <option value="Carro extra rota D2D">Carro extra rota D2D</option>
-          <option value="Cotação de preço">Cotação de preço</option>
-        </select>
-      </label>
-      <label>Data/Hora do carregamento
-        <input type="datetime-local" name="requested_datetime" required />
-      </label>
-      <label>Quantidade
-        <input type="number" min="1" id="req-quantity" name="quantity" value="1" required oninput="updateVehicleSelects()" />
-      </label>
-      <label>Origem
-        <input name="origin" required />
-      </label>
-      <label>Destino
-        <input name="destination" required />
-      </label>
-      <div id="requested-vehicles-container" class="full" style="display: grid; grid-template-columns: 1fr; gap: 0.5rem;">
-        <!-- Dynamically generated vehicle selects go here -->
-      </div>
-      <label>Centro de Custo
-        <input name="cost_center" />
-      </label>
-      <label class="full">Observações do carregamento
-        <textarea name="notes"></textarea>
-      </label>
-      <button class="full" type="submit">Registrar solicitação</button>
-    </form>
-  </article>
+<style>
+  .tabs-navigation-wrapper {
+    display: flex;
+    gap: 0.5rem;
+    margin-bottom: 2rem;
+    border-bottom: 2px solid #e2e8f0;
+    padding-bottom: 0px;
+  }
+  .tab-navigation-btn {
+    background: none;
+    border: none;
+    padding: 0.75rem 1.25rem;
+    font-weight: 700;
+    font-size: 0.95rem;
+    color: #64748b;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    border-bottom: 3px solid transparent;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin-bottom: -2px;
+  }
+  .tab-navigation-btn:hover {
+    color: #0f172a;
+  }
+  .tab-navigation-btn.active-tab {
+    color: #3b82f6;
+    border-bottom-color: #3b82f6;
+  }
+  
+  .tab-content-pane {
+    display: none;
+    animation: tabFadeIn 0.3s ease;
+  }
+  .tab-content-pane.active-pane {
+    display: block;
+  }
+  
+  @keyframes tabFadeIn {
+    from { opacity: 0; transform: translateY(4px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+</style>
 
-  {% include '_partner_metrics.html' %}
-</section>
+<div class="tabs-navigation-wrapper">
+  <button id="tab-btn-operations" class="tab-navigation-btn active-tab" onclick="switchTab('operations')">
+    <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2.5" fill="none" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="9"></rect><rect x="14" y="3" width="7" height="5"></rect><rect x="14" y="12" width="7" height="9"></rect><rect x="3" y="16" width="7" height="5"></rect></svg>
+    Solicitações e Painel
+  </button>
+  <button id="tab-btn-analytics" class="tab-navigation-btn" onclick="switchTab('analytics')">
+    <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2.5" fill="none" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="20" x2="18" y2="10"></line><line x1="12" y1="20" x2="12" y2="4"></line><line x1="6" y1="20" x2="6" y2="14"></line></svg>
+    Análise & Indicadores
+  </button>
+</div>
 
-{% include '_partner_requests.html' %}
+<div id="pane-operations" class="tab-content-pane active-pane">
+  <section class="panel split">
+    <article class="card">
+      <h3>Nova solicitação</h3>
+      <form class="form-grid" method="post" action="/partner/requests/new">
+        <label>Base
+          <select name="base_id" required>
+            {% for base in user.bases %}
+            <option value="{{ base.id }}">{{ base.name }} - {{ base.location }}</option>
+            {% endfor %}
+          </select>
+        </label>
+        <label>Tipo
+          <select name="request_type" required>
+            <option value="Viagem extra NILO">Viagem extra NILO</option>
+            <option value="Carro dedicado">Carro dedicado</option>
+            <option value="Carro extra rota D2D">Carro extra rota D2D</option>
+            <option value="Cotação de preço">Cotação de preço</option>
+          </select>
+        </label>
+        <label>Data/Hora do carregamento
+          <input type="datetime-local" name="requested_datetime" required />
+        </label>
+        <label>Quantidade
+          <input type="number" min="1" id="req-quantity" name="quantity" value="1" required oninput="updateVehicleSelects()" />
+        </label>
+        <label>Origem
+          <input name="origin" required />
+        </label>
+        <label>Destino
+          <input name="destination" required />
+        </label>
+        <div id="requested-vehicles-container" class="full" style="display: grid; grid-template-columns: 1fr; gap: 0.5rem;">
+          <!-- Dynamically generated vehicle selects go here -->
+        </div>
+        <label>Centro de Custo
+          <input name="cost_center" />
+        </label>
+        <label class="full">Observações do carregamento
+          <textarea name="notes"></textarea>
+        </label>
+        <button class="full" type="submit">Registrar solicitação</button>
+      </form>
+    </article>
+
+    {% include '_partner_metrics.html' %}
+  </section>
+
+  {% include '_partner_requests.html' %}
+</div>
+
+<div id="pane-analytics" class="tab-content-pane">
+  {% include '_partner_analytics.html' %}
+</div>
 
 <script>
+  function switchTab(tabId) {
+    document.getElementById('tab-btn-operations').classList.remove('active-tab');
+    document.getElementById('tab-btn-analytics').classList.remove('active-tab');
+    
+    document.getElementById('pane-operations').classList.remove('active-pane');
+    document.getElementById('pane-analytics').classList.remove('active-pane');
+    
+    if (tabId === 'operations') {
+      document.getElementById('tab-btn-operations').classList.add('active-tab');
+      document.getElementById('pane-operations').classList.add('active-pane');
+    } else if (tabId === 'analytics') {
+      document.getElementById('tab-btn-analytics').classList.add('active-tab');
+      document.getElementById('pane-analytics').classList.add('active-pane');
+      if (typeof loadAnalyticsData === 'function') {
+        loadAnalyticsData();
+      }
+    }
+  }
+
   const vehicleTypes = {{ vehicle_types | tojson }};
   function updateVehicleSelects() {
     const container = document.getElementById('requested-vehicles-container');

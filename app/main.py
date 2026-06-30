@@ -9,6 +9,7 @@ from sqlmodel import Session
 
 from app.db import engine, init_db
 from app.routes.web import router as web_router
+from app.routes.partner_analytics import router as partner_analytics_router
 
 
 load_dotenv()
@@ -91,6 +92,7 @@ app.mount("/static", StaticFiles(directory=os.path.join(os.path.dirname(__file__
 if root_path:
     app.mount(f"{root_path}/static", StaticFiles(directory=os.path.join(os.path.dirname(__file__), "static")), name="static_root")
 app.include_router(web_router)
+app.include_router(partner_analytics_router)
 
 
 @app.middleware("http")
