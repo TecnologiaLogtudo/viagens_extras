@@ -63,6 +63,7 @@
     <nav class="context-nav" aria-label="Navegação principal">
       {% if user.role.value == 'partner_requester' %}
         <a href="/partner">Portal Parceiro</a>
+        <a href="/partner?tab=analytics">Análise & Indicadores</a>
         <a href="/partner/settings">Configurações do Perfil</a>
       {% else %}
         {% if user.role.value in ['base_supervisor', 'logistics_manager'] %}

@@ -177,6 +177,13 @@
       container.appendChild(label);
     }
   }
-  document.addEventListener('DOMContentLoaded', updateVehicleSelects);
+  document.addEventListener('DOMContentLoaded', () => {
+    updateVehicleSelects();
+    const urlParams = new URLSearchParams(window.location.search);
+    const tabParam = urlParams.get('tab');
+    if (tabParam === 'analytics') {
+      switchTab('analytics');
+    }
+  });
 </script>
 {% endblock %}
