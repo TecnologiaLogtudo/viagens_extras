@@ -1007,6 +1007,79 @@ def test_supervisor_panel_driver_filtering(client: TestClient):
     assert "Driver Sedan Test" not in resp.text
 
 
+def test_supervisor_panel_filtering_multiple(client: TestClient):
+    login(client, "supervisor@logtudo.local", "supervisor123")
+    with Session(engine) as session:
+        partner = session.exec(select(User).where(User.email == "parceiro@logtudo.local")).first()
+        sup = session.exec(select(User).where(User.email == "supervisor@logtudo.local")).first()
+        sup_id = sup.id
+        base = session.exec(select(Base)).first()
+        company = session.get(Company, partner.company_id)
+
+        # Create request for SEDAN and VAN
+        req = TravelRequest(
+            protocol=f"VX-FILT-M-{int(datetime.now(timezone.utc).timestamp())}",
+            company_id=company.id,
+            base_id=base.id,
+            requested_by_user_id=partner.id,
+            request_type="extra",
+            requested_datetime=datetime(2030, 1, 3, 10, 0, tzinfo=timezone.utc),
+            origin="A",
+            destination="B",
+            quantity=2,
+            vehicle_type_requested="sedan, van",
+            cost_center="CC",
+            reason="teste",
+            status=RequestStatus.TRIAGE,
+        )
+        session.add(req)
+        session.flush()
+
+        # Link supervisor to request's base in the test
+        cb = session.exec(select(CompanyBase).where(CompanyBase.base_id == base.id)).first()
+        if cb:
+            exists = session.exec(
+                select(UserCompanyBaseLink).where(
+                    UserCompanyBaseLink.user_id == sup_id,
+                    UserCompanyBaseLink.company_base_id == cb.id,
+                )
+            ).first()
+            if not exists:
+                session.add(UserCompanyBaseLink(user_id=sup_id, company_base_id=cb.id))
+
+        # Create three drivers with unique plates to avoid conflicts
+        stamp = int(datetime.now(timezone.utc).timestamp())
+        v_sedan = Vehicle(plate=f"MSD{stamp%10000:04d}", vehicle_type="SEDAN", base_id=base.id, active=True)
+        session.add(v_sedan)
+        session.flush()
+        d_sedan = Driver(name="Driver Multi Sedan Test", phone="11911111111", base_id=base.id, vehicle_id=v_sedan.id, active=True)
+        session.add(d_sedan)
+
+        v_van = Vehicle(plate=f"MVN{stamp%10000:04d}", vehicle_type="VAN", base_id=base.id, active=True)
+        session.add(v_van)
+        session.flush()
+        d_van = Driver(name="Driver Multi Van Test", phone="11922222222", base_id=base.id, vehicle_id=v_van.id, active=True)
+        session.add(d_van)
+
+        v_truck = Vehicle(plate=f"MTK{stamp%10000:04d}", vehicle_type="TRUCK", base_id=base.id, active=True)
+        session.add(v_truck)
+        session.flush()
+        d_truck = Driver(name="Driver Multi Truck Test", phone="11944444444", base_id=base.id, vehicle_id=v_truck.id, active=True)
+        session.add(d_truck)
+
+        session.commit()
+        session.refresh(req)
+        req_id = req.id
+
+    # 1. Access supervisor panel (no confirmation yet)
+    resp = client.get(f"/empresa/requests/{req_id}/supervisor-panel")
+    assert resp.status_code == 200
+    assert "Driver Multi Sedan Test" in resp.text
+    assert "Driver Multi Van Test" in resp.text
+    assert "Driver Multi Truck Test" not in resp.text
+
+
+
 def test_web_quote_flow_accept_decline(client: TestClient):
     # 1. Create a request of type "Cotação de preço"
     with Session(engine) as session:

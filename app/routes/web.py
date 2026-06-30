@@ -934,6 +934,22 @@ def company_operations(
                 vehicles_for_selected = session.exec(
                     select(Vehicle).where(Vehicle.base_id == req.base_id).order_by(Vehicle.plate)
                 ).all()
+                
+                # Filter drivers by requested or confirmed vehicle type
+                conf = session.exec(
+                    select(OperationalConfirmation).where(OperationalConfirmation.request_id == req.id)
+                ).first()
+                allowed_types = set()
+                if conf and conf.confirmed_vehicle_type:
+                    allowed_types = {t.strip().lower() for t in re.split(r"[,\s;/]+", conf.confirmed_vehicle_type) if t.strip()}
+                elif req.vehicle_type_requested:
+                    allowed_types = {t.strip().lower() for t in re.split(r"[,\s;/]+", req.vehicle_type_requested) if t.strip()}
+                
+                if allowed_types:
+                    drivers_for_selected = [
+                        d for d in drivers_for_selected
+                        if not d.vehicle or d.vehicle.vehicle_type.strip().lower() in allowed_types
+                    ]
     return templates.TemplateResponse(
         "company_operations.html",
         {
@@ -2069,14 +2085,14 @@ def operations_supervisor_panel_fragment(
     # Filter drivers by requested or confirmed vehicle type
     allowed_types = set()
     if confirmation and confirmation.confirmed_vehicle_type:
-        allowed_types = {t.strip().lower() for t in confirmation.confirmed_vehicle_type.split(",") if t.strip()}
+        allowed_types = {t.strip().lower() for t in re.split(r"[,\s;/]+", confirmation.confirmed_vehicle_type) if t.strip()}
     elif req.vehicle_type_requested:
-        allowed_types = {t.strip().lower() for t in req.vehicle_type_requested.split(",") if t.strip()}
+        allowed_types = {t.strip().lower() for t in re.split(r"[,\s;/]+", req.vehicle_type_requested) if t.strip()}
 
     if allowed_types:
         drivers = [
             d for d in drivers
-            if not d.vehicle or d.vehicle.vehicle_type.lower() in allowed_types
+            if not d.vehicle or d.vehicle.vehicle_type.strip().lower() in allowed_types
         ]
 
     status_label = {
@@ -2556,14 +2572,14 @@ def supervisor_panel(
     # Filter drivers by requested or confirmed vehicle type
     allowed_types = set()
     if confirmation and confirmation.confirmed_vehicle_type:
-        allowed_types = {t.strip().lower() for t in confirmation.confirmed_vehicle_type.split(",") if t.strip()}
+        allowed_types = {t.strip().lower() for t in re.split(r"[,\s;/]+", confirmation.confirmed_vehicle_type) if t.strip()}
     elif req.vehicle_type_requested:
-        allowed_types = {t.strip().lower() for t in req.vehicle_type_requested.split(",") if t.strip()}
+        allowed_types = {t.strip().lower() for t in re.split(r"[,\s;/]+", req.vehicle_type_requested) if t.strip()}
 
     if allowed_types:
         drivers = [
             d for d in drivers
-            if not d.vehicle or d.vehicle.vehicle_type.lower() in allowed_types
+            if not d.vehicle or d.vehicle.vehicle_type.strip().lower() in allowed_types
         ]
 
     status_label = {
