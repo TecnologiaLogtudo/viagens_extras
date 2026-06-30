@@ -60,15 +60,26 @@ def get_analytics_data(
             continue
         if base_id and r.base_id != base_id:
             continue
-        if status and r.status.value != status:
-            continue
+        if status:
+            if status == "open":
+                if r.status not in (RequestStatus.SUBMITTED, RequestStatus.TRIAGE, RequestStatus.ACCEPTED, RequestStatus.IN_EXECUTION):
+                    continue
+            elif status == "pending_acceptance":
+                if not (r.status == RequestStatus.CONFIRMED and r.request_type == "Cotação de preço"):
+                    continue
+            elif status == "completed":
+                if r.status != RequestStatus.COMPLETED:
+                    continue
+            elif status == "canceled":
+                if r.status not in (RequestStatus.CANCELED, RequestStatus.REFUSED):
+                    continue
         filtered.append(r)
 
     # Status labels mapping
     status_labels_map = {
         RequestStatus.SUBMITTED: "Enviado",
         RequestStatus.TRIAGE: "Em triagem",
-        RequestStatus.CONFIRMED: "Confirmação pendente de aceite",
+        RequestStatus.CONFIRMED: "Aprovação pendente de aceite",
         RequestStatus.ACCEPTED: "Aceito",
         RequestStatus.IN_EXECUTION: "Em execução",
         RequestStatus.COMPLETED: "Concluído",
@@ -85,11 +96,27 @@ def get_analytics_data(
     quote_conversion_rate = (len(quotes_converted) / len(quotes) * 100) if quotes else 0.0
 
     # 2. Charts Data
-    # Status Distribution
-    status_counts = {}
+    # Status Distribution grouped into the 4 main states
+    status_groups = {
+        "Abertos": 0,
+        "Aguardando aceite": 0,
+        "Concluídos": 0,
+        "Cancelados": 0
+    }
     for r in filtered:
-        lbl = status_labels_map.get(r.status) or r.status.value
-        status_counts[lbl] = status_counts.get(lbl, 0) + 1
+        if r.status in (RequestStatus.SUBMITTED, RequestStatus.TRIAGE, RequestStatus.ACCEPTED, RequestStatus.IN_EXECUTION):
+            status_groups["Abertos"] += 1
+        elif r.status == RequestStatus.CONFIRMED and r.request_type == "Cotação de preço":
+            status_groups["Aguardando aceite"] += 1
+        elif r.status == RequestStatus.COMPLETED:
+            status_groups["Concluídos"] += 1
+        elif r.status in (RequestStatus.CANCELED, RequestStatus.REFUSED):
+            status_groups["Cancelados"] += 1
+            
+    status_distribution = {
+        "labels": [k for k, v in status_groups.items() if v > 0],
+        "data": [v for k, v in status_groups.items() if v > 0]
+    }
 
     # Base Distribution
     base_counts = {}
@@ -137,10 +164,7 @@ def get_analytics_data(
             "quotes_converted": len(quotes_converted),
         },
         "charts": {
-            "status_distribution": {
-                "labels": list(status_counts.keys()),
-                "data": list(status_counts.values()),
-            },
+            "status_distribution": status_distribution,
             "monthly_volume": {
                 "labels": months_labels,
                 "data": month_counts,
@@ -176,16 +200,25 @@ def export_analytics_csv(
             continue
         if month and local_req_dt.month != month:
             continue
-        if base_id and r.base_id != base_id:
-            continue
-        if status and r.status.value != status:
-            continue
+        if status:
+            if status == "open":
+                if r.status not in (RequestStatus.SUBMITTED, RequestStatus.TRIAGE, RequestStatus.ACCEPTED, RequestStatus.IN_EXECUTION):
+                    continue
+            elif status == "pending_acceptance":
+                if not (r.status == RequestStatus.CONFIRMED and r.request_type == "Cotação de preço"):
+                    continue
+            elif status == "completed":
+                if r.status != RequestStatus.COMPLETED:
+                    continue
+            elif status == "canceled":
+                if r.status not in (RequestStatus.CANCELED, RequestStatus.REFUSED):
+                    continue
         filtered.append(r)
 
     status_labels_map = {
         RequestStatus.SUBMITTED: "Enviado",
         RequestStatus.TRIAGE: "Em triagem",
-        RequestStatus.CONFIRMED: "Confirmação pendente de aceite",
+        RequestStatus.CONFIRMED: "Aprovação pendente de aceite",
         RequestStatus.ACCEPTED: "Aceito",
         RequestStatus.IN_EXECUTION: "Em execução",
         RequestStatus.COMPLETED: "Concluído",
