@@ -227,9 +227,10 @@ def export_analytics_csv(
     }
 
     f = StringIO()
+    f.write('\ufeff')  # UTF-8 BOM for Excel
     writer = csv.writer(f, delimiter=';')
     writer.writerow([
-        "Protocolo", "Solicitado em", "Data Agendamento", "Tipo", 
+        "Protocolo", "Solicitado em", "Solicitante", "Data Agendamento", "Tipo", 
         "Status", "Base", "Origem", "Destino", "Qtd. Veiculos", 
         "Tipo Veiculos", "Centro de Custo", "Observações"
     ])
@@ -241,9 +242,13 @@ def export_analytics_csv(
         req_dt_str = local_dt(r.requested_datetime).strftime("%d/%m/%Y %H:%M") if r.requested_datetime else "N/A"
         st_lbl = status_labels_map.get(r.status) or r.status.value
 
+        requester = session.get(User, r.requested_by_user_id) if r.requested_by_user_id else None
+        requester_name = requester.full_name if requester else "N/A"
+
         writer.writerow([
             r.protocol,
             created_str,
+            requester_name,
             req_dt_str,
             r.request_type,
             st_lbl,

@@ -1437,10 +1437,38 @@ def list_billable_requests(session: Session, company_id: Optional[int], base_id:
 def billing_csv(session: Session, company_id: Optional[int], base_id: Optional[int]) -> str:
     rows = list_billable_requests(session, company_id=company_id, base_id=base_id)
     output = io.StringIO()
-    writer = csv.writer(output)
-    writer.writerow(["protocol", "company_id", "base_id", "status", "requested_datetime"])
+    output.write('\ufeff')  # UTF-8 BOM for Excel
+    writer = csv.writer(output, delimiter=';')
+    writer.writerow(["Protocolo", "Empresa", "Base", "Status", "Data Agendamento", "Solicitante"])
     for row in rows:
-        writer.writerow([row.protocol, row.company_id, row.base_id, row.status.value, row.requested_datetime.isoformat()])
+        company = session.get(Company, row.company_id) if row.company_id else None
+        company_name = company.name if company else "N/A"
+        base = session.get(Base, row.base_id) if row.base_id else None
+        base_name = f"{base.name} - {base.location}" if base else "N/A"
+
+        status_labels_map = {
+            RequestStatus.SUBMITTED: "Enviado",
+            RequestStatus.TRIAGE: "Em triagem",
+            RequestStatus.CONFIRMED: "Aprovação pendente de aceite",
+            RequestStatus.ACCEPTED: "Aceito",
+            RequestStatus.IN_EXECUTION: "Em execução",
+            RequestStatus.COMPLETED: "Concluído",
+            RequestStatus.REFUSED: "Recusado",
+            RequestStatus.CANCELED: "Cancelado",
+        }
+        st_lbl = status_labels_map.get(row.status) or row.status.value
+
+        requester = session.get(User, row.requested_by_user_id) if row.requested_by_user_id else None
+        requester_name = requester.full_name if requester else "N/A"
+
+        from zoneinfo import ZoneInfo
+        try:
+            local_req_dt = row.requested_datetime.astimezone(ZoneInfo("America/Sao_Paulo"))
+        except Exception:
+            local_req_dt = row.requested_datetime
+        req_dt_str = local_req_dt.strftime("%d/%m/%Y %H:%M")
+
+        writer.writerow([row.protocol, company_name, base_name, st_lbl, req_dt_str, requester_name])
     return output.getvalue()
 
 

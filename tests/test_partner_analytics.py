@@ -44,8 +44,10 @@ def test_partner_analytics_data_and_export(client: TestClient):
     assert "attachment; filename=" in export_resp.headers["content-disposition"]
     
     content = export_resp.text
+    assert content.startswith("\ufeff")
     assert "Protocolo;" in content
     assert "Solicitado em;" in content
+    assert "Solicitante;" in content
 
 
 def test_partner_analytics_filtering(client: TestClient):
