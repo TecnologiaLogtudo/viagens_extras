@@ -115,6 +115,68 @@
       const list = document.getElementById('notif-list');
       const readAllBtn = document.getElementById('notif-read-all');
 
+      let unreadNotificationIds = new Set();
+      let isFirstLoad = true;
+      let originalTitle = document.title;
+      let flashInterval = null;
+      let isFlashing = false;
+
+      function playNotificationSound() {
+        try {
+          const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+          
+          // Chime node 1 (D5)
+          const osc1 = audioCtx.createOscillator();
+          const gain1 = audioCtx.createGain();
+          osc1.connect(gain1);
+          gain1.connect(audioCtx.destination);
+          osc1.type = 'sine';
+          osc1.frequency.setValueAtTime(587.33, audioCtx.currentTime);
+          gain1.gain.setValueAtTime(0.08, audioCtx.currentTime);
+          gain1.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.4);
+          osc1.start(audioCtx.currentTime);
+          osc1.stop(audioCtx.currentTime + 0.4);
+
+          // Chime node 2 (A5)
+          const osc2 = audioCtx.createOscillator();
+          const gain2 = audioCtx.createGain();
+          osc2.connect(gain2);
+          gain2.connect(audioCtx.destination);
+          osc2.type = 'sine';
+          osc2.frequency.setValueAtTime(880.00, audioCtx.currentTime + 0.1);
+          gain2.gain.setValueAtTime(0.08, audioCtx.currentTime + 0.1);
+          gain2.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.5);
+          osc2.start(audioCtx.currentTime + 0.1);
+          osc2.stop(audioCtx.currentTime + 0.5);
+        } catch (e) {
+          console.warn("Sound context not allowed or initialized: ", e);
+        }
+      }
+
+      function startFlashingTab() {
+        if (isFlashing) return;
+        isFlashing = true;
+        let alternate = true;
+        if (flashInterval) clearInterval(flashInterval);
+        flashInterval = setInterval(() => {
+          document.title = alternate ? "🔔 Nova Notificação!" : originalTitle;
+          alternate = !alternate;
+        }, 1000);
+      }
+
+      function stopFlashingTab() {
+        isFlashing = false;
+        if (flashInterval) {
+          clearInterval(flashInterval);
+          flashInterval = null;
+        }
+        document.title = originalTitle;
+      }
+
+      window.addEventListener('focus', () => {
+        stopFlashingTab();
+      });
+
       function loadNotifications() {
         if (!bellBtn) return;
         fetch(rootPath + '/notifications')
@@ -126,7 +188,26 @@
               badge.classList.remove('hidden');
             } else {
               badge.classList.add('hidden');
+              stopFlashingTab();
             }
+
+            // Detect new notifications
+            let hasNew = false;
+            const currentIds = new Set();
+            notifs.forEach(n => {
+              currentIds.add(n.id);
+              if (!unreadNotificationIds.has(n.id)) {
+                hasNew = true;
+              }
+            });
+
+            unreadNotificationIds = currentIds;
+
+            if (hasNew && !isFirstLoad) {
+              playNotificationSound();
+              startFlashingTab();
+            }
+            isFirstLoad = false;
             
             list.innerHTML = '';
             if(notifs.length === 0) {
