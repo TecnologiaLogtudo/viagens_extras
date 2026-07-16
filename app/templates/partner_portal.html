@@ -67,7 +67,7 @@
           </select>
         </label>
         <label>Tipo
-          <select name="request_type" required>
+          <select name="request_type" id="req-type-select" required onchange="handleRequestTypeChange(this.value)">
             <option value="Viagem extra NILO">Viagem extra NILO</option>
             <option value="Carro dedicado">Carro dedicado</option>
             <option value="Carro extra rota D2D">Carro extra rota D2D</option>
@@ -85,11 +85,18 @@
         <label>Quantidade
           <input type="number" min="1" id="req-quantity" name="quantity" value="1" required oninput="updateVehicleSelects()" />
         </label>
+        <label id="nilo-route-label" style="display: none;" class="full">Rota NILO EXTRA
+          <select id="nilo-route-select" onchange="applyNiloRoute(this.value)">
+            <option value="">Selecione a rota...</option>
+            <option value="route1">Amazon &rarr; Aeroporto</option>
+            <option value="route2">Aeroporto &rarr; Amazon</option>
+          </select>
+        </label>
         <label>Origem
-          <input name="origin" required />
+          <input name="origin" id="req-origin" required />
         </label>
         <label>Destino
-          <input name="destination" required />
+          <input name="destination" id="req-destination" required />
         </label>
         <div id="requested-vehicles-container" class="full" style="display: grid; grid-template-columns: 1fr; gap: 0.5rem;">
           <!-- Dynamically generated vehicle selects go here -->
@@ -167,6 +174,57 @@
       container.appendChild(label);
     }
   }
+
+  function handleRequestTypeChange(type) {
+    const niloRouteLabel = document.getElementById('nilo-route-label');
+    const niloRouteSelect = document.getElementById('nilo-route-select');
+    const originInput = document.getElementById('req-origin');
+    const destInput = document.getElementById('req-destination');
+
+    if (!niloRouteLabel || !niloRouteSelect || !originInput || !destInput) return;
+
+    // Reset values & attributes
+    niloRouteLabel.style.display = 'none';
+    niloRouteSelect.removeAttribute('required');
+    niloRouteSelect.value = '';
+
+    originInput.value = '';
+    originInput.removeAttribute('readonly');
+    destInput.value = '';
+    destInput.removeAttribute('readonly');
+
+    if (type === 'NILO EXTRA') {
+      niloRouteLabel.style.display = 'block';
+      niloRouteSelect.setAttribute('required', 'required');
+      originInput.setAttribute('readonly', 'readonly');
+      destInput.setAttribute('readonly', 'readonly');
+    } else if (type === 'DSD EXTRA ROTA') {
+      destInput.value = 'Limite de distância de 100km';
+      destInput.setAttribute('readonly', 'readonly');
+    } else if (type === 'DSD EXTRA DEDICADO') {
+      originInput.value = 'Aeroporto';
+      originInput.setAttribute('readonly', 'readonly');
+    }
+  }
+
+  function applyNiloRoute(route) {
+    const originInput = document.getElementById('req-origin');
+    const destInput = document.getElementById('req-destination');
+
+    if (!originInput || !destInput) return;
+
+    if (route === 'route1') {
+      originInput.value = 'Amazon';
+      destInput.value = 'Aeroporto';
+    } else if (route === 'route2') {
+      originInput.value = 'Aeroporto';
+      destInput.value = 'Amazon';
+    } else {
+      originInput.value = '';
+      destInput.value = '';
+    }
+  }
+
   document.addEventListener('DOMContentLoaded', () => {
     updateVehicleSelects();
     const urlParams = new URLSearchParams(window.location.search);
