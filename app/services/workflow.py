@@ -466,6 +466,48 @@ def create_request(session: Session, user: User, payload: TravelRequestCreate) -
             user_id=op.id,
         )
 
+    # Notificar o Parceiro que criou a solicitação
+    partner_subject = f"Solicitação aberta com sucesso - Protocolo {request.protocol}"
+    if request.request_type == "Cotação de preço":
+        partner_body = (
+            f"Olá, {user.full_name}.\n\n"
+            f"Sua solicitação de cotação de preço foi registrada com sucesso e já está sendo analisada pela equipe de operações da Logtudo.\n\n"
+            f"Detalhes da Solicitação:\n"
+            f"• Protocolo: {request.protocol}\n"
+            f"• Origem: {request.origin}\n"
+            f"• Destino: {request.destination}\n"
+            f"• Veículo Solicitado: {request.vehicle_type_requested}\n"
+            f"• Quantidade: {request.quantity}\n"
+            f"• Data/Hora do Carregamento: {formatted_dt}\n\n"
+            f"Você receberá uma notificação por e-mail assim que a triagem for concluída com a proposta de tarifa.\n\n"
+            f"Atenciosamente,\n"
+            f"Equipe Logtudo"
+        )
+    else:
+        partner_body = (
+            f"Olá, {user.full_name}.\n\n"
+            f"Sua solicitação de viagem extra foi registrada com sucesso e já está em processamento pela equipe de operações da Logtudo.\n\n"
+            f"Detalhes da Solicitação:\n"
+            f"• Protocolo: {request.protocol}\n"
+            f"• Origem: {request.origin}\n"
+            f"• Destino: {request.destination}\n"
+            f"• Veículo Solicitado: {request.vehicle_type_requested}\n"
+            f"• Quantidade: {request.quantity}\n"
+            f"• Data/Hora do Carregamento: {formatted_dt}\n\n"
+            f"Você receberá uma notificação por e-mail assim que a viagem for confirmada e o motorista alocado.\n\n"
+            f"Atenciosamente,\n"
+            f"Equipe Logtudo"
+        )
+    send_email_notification(
+        session,
+        NotificationType.REQUEST_SUBMITTED,
+        user.email,
+        partner_subject,
+        partner_body,
+        request_id=request.id,
+        user_id=user.id,
+    )
+
     session.commit()
 
     session.refresh(request)
@@ -768,6 +810,25 @@ def propose_change(session: Session, user: User, request: TravelRequest, payload
             request_id=request.id,
             user_id=op.id,
         )
+
+    # Notificar o Parceiro
+    partner_subject = f"Alteração de solicitação registrada - Protocolo {request.protocol}"
+    partner_body = (
+        f"Olá, {user.full_name}.\n\n"
+        f"Confirmamos que as alterações propostas para a sua solicitação de protocolo {request.protocol} foram registradas com sucesso.\n\n"
+        f"A solicitação retornou para análise (status Pendente de Triagem) e a equipe de operações da Logtudo foi notificada.\n\n"
+        f"Atenciosamente,\n"
+        f"Equipe Logtudo"
+    )
+    send_email_notification(
+        session,
+        NotificationType.REQUEST_SUBMITTED,
+        user.email,
+        partner_subject,
+        partner_body,
+        request_id=request.id,
+        user_id=user.id,
+    )
     session.commit()
 
 
@@ -828,6 +889,35 @@ def sign_acceptance(session: Session, user: User, request: TravelRequest, code: 
         request_id=request.id,
         user_id=user.id,
     )
+
+    # Notificar os supervisores e gerentes do aceite do parceiro
+    operators = session.exec(
+        select(User).where(
+            User.role.in_([UserRole.BASE_SUPERVISOR, UserRole.LOGISTICS_MANAGER]),
+            User.is_active == True,
+        )
+    ).all()
+    for op in operators:
+        if op.role == UserRole.BASE_SUPERVISOR and not supervisor_can_access_request(session, op, request):
+            continue
+        role_label = "Supervisor" if op.role == UserRole.BASE_SUPERVISOR else "Gerente"
+        subject = f"Aceite de cotação registrado - Protocolo {request.protocol}"
+        body = (
+            f"Olá, {role_label}.\n\n"
+            f"O parceiro {user.full_name} registrou o aceite da proposta de cotação para a solicitação de protocolo {request.protocol}.\n\n"
+            f"Por favor, acesse o painel operacional para prosseguir com a programação e alocação do motorista.\n\n"
+            f"Atenciosamente,\n"
+            f"Sistema de Viagens Extras Logtudo"
+        )
+        send_email_notification(
+            session,
+            NotificationType.ACCEPTANCE_SIGNED,
+            op.email,
+            subject,
+            body,
+            request_id=request.id,
+            user_id=op.id,
+        )
 
     session.add(challenge)
     session.add(request)
@@ -966,6 +1056,40 @@ def dispatch_trip(session: Session, user: User, request: TravelRequest, driver_i
                     session.add(other_driver)
 
     log_event(session, request.id, user.id, "trip_dispatched", f"driver={driver_id}|vehicle={vehicle_id}")
+
+    # Notificar o Parceiro
+    requester = session.get(User, request.requested_by_user_id)
+    if requester:
+        from zoneinfo import ZoneInfo
+        try:
+            local_dt = planned_departure_at.astimezone(ZoneInfo("America/Sao_Paulo"))
+        except Exception:
+            local_dt = planned_departure_at
+        formatted_departure = local_dt.strftime("%d/%m/%Y às %H:%M")
+
+        subject = f"Viagem em execução: {request.protocol}"
+        body = (
+            f"Olá, {requester.full_name}.\n\n"
+            f"Gostaríamos de informar que a sua solicitação de transporte de protocolo {request.protocol} foi despachada e já está em execução.\n\n"
+            f"Detalhes do Despacho:\n"
+            f"• Protocolo: {request.protocol}\n"
+            f"• Motorista Alocado: {driver.name} (Telefone: {driver.phone or 'Não informado'})\n"
+            f"• Veículo Alocado: Placa {vehicle.plate} (Tipo: {vehicle.vehicle_type})\n"
+            f"• Previsão de Saída: {formatted_departure}\n\n"
+            f"Acompanhe o status através do Portal do Parceiro.\n\n"
+            f"Atenciosamente,\n"
+            f"Equipe Logtudo"
+        )
+        send_email_notification(
+            session,
+            NotificationType.REQUEST_CONFIRMED,
+            requester.email,
+            subject,
+            body,
+            request_id=request.id,
+            user_id=requester.id,
+        )
+
     session.commit()
     session.refresh(dispatch)
     return dispatch

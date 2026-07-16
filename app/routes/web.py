@@ -3082,15 +3082,8 @@ def download_comprovante(
     else:
         raise HTTPException(status_code=403, detail="Sem permissão")
 
-    # Document retrieval and on-the-fly regeneration logic
-    doc = session.exec(select(Document).where(Document.request_id == req.id)).first()
-    file_exists = False
-    if doc and doc.file_path:
-        file_exists = Path(doc.file_path).exists()
-
-    if not doc or not file_exists:
-        # Regenerate document if missing
-        doc = generate_pdf_document(session, req)
+    # Always regenerate document on download to ensure layout updates and fresh data
+    doc = generate_pdf_document(session, req)
 
     return FileResponse(
         path=doc.file_path,

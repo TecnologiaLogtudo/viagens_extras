@@ -740,6 +740,176 @@ def test_triage_request_sends_correct_emails(session, monkeypatch):
     assert "Aprovado apenas 1 veículo devido ao limite" in email["body"]
 
 
+def test_create_request_sends_partner_email(session, monkeypatch):
+    sent_emails = []
+    def mock_send_email(to_email, subject, body, attachment_path=None):
+        sent_emails.append({
+            "to_email": to_email,
+            "subject": subject,
+            "body": body,
+            "attachment_path": attachment_path
+        })
+    monkeypatch.setattr("app.services.workflow.send_email", mock_send_email)
+
+    partner = session.exec(select(User).where(User.role == UserRole.PARTNER_REQUESTER)).first()
+    base = session.exec(select(Base)).first()
+    
+    payload = TravelRequestCreate(
+        base_id=base.id,
+        request_type="Cotação de preço",
+        requested_datetime=datetime(2030, 1, 2, 10, 0, tzinfo=timezone.utc),
+        origin="A",
+        destination="B",
+        quantity=1,
+        vehicle_type_requested="sedan",
+        cost_center="CC",
+        reason="motivo",
+    )
+    
+    create_request(session, partner, payload)
+    
+    partner_emails = [e for e in sent_emails if e["to_email"] == partner.email]
+    assert len(partner_emails) == 1
+    assert "Solicitação aberta com sucesso" in partner_emails[0]["subject"]
+    assert "cotação de preço" in partner_emails[0]["body"]
+
+
+def test_propose_change_sends_partner_email(session, monkeypatch):
+    sent_emails = []
+    def mock_send_email(to_email, subject, body, attachment_path=None):
+        sent_emails.append({
+            "to_email": to_email,
+            "subject": subject,
+            "body": body,
+            "attachment_path": attachment_path
+        })
+    monkeypatch.setattr("app.services.workflow.send_email", mock_send_email)
+
+    req = _mk_request(session)
+    partner = session.exec(select(User).where(User.role == UserRole.PARTNER_REQUESTER)).first()
+    
+    payload = TravelRequestCreate(
+        base_id=req.base_id,
+        request_type=req.request_type,
+        requested_datetime=datetime(2030, 1, 2, 11, 0, tzinfo=timezone.utc),
+        origin=req.origin,
+        destination=req.destination,
+        quantity=req.quantity,
+        vehicle_type_requested=req.vehicle_type_requested,
+        cost_center=req.cost_center,
+        reason=req.reason,
+    )
+    
+    # We clear the list so we only assert emails sent during proposing changes
+    sent_emails.clear()
+    
+    from app.services.workflow import propose_change
+    propose_change(session, partner, req, payload)
+    
+    partner_emails = [e for e in sent_emails if e["to_email"] == partner.email]
+    assert len(partner_emails) == 1
+    assert "Alteração de solicitação registrada" in partner_emails[0]["subject"]
+    assert "status Pendente de Triagem" in partner_emails[0]["body"]
+
+
+def test_sign_acceptance_sends_supervisor_email(session, monkeypatch):
+    sent_emails = []
+    def mock_send_email(to_email, subject, body, attachment_path=None):
+        sent_emails.append({
+            "to_email": to_email,
+            "subject": subject,
+            "body": body,
+            "attachment_path": attachment_path
+        })
+    monkeypatch.setattr("app.services.workflow.send_email", mock_send_email)
+
+    req = _mk_request(session)
+    req.request_type = "Cotação de preço"
+    session.add(req)
+    session.commit()
+    
+    partner = session.exec(select(User).where(User.role == UserRole.PARTNER_REQUESTER)).first()
+    sup = session.exec(select(User).where(User.role == UserRole.BASE_SUPERVISOR)).first()
+    
+    from app.models import TriageDecisionPayload
+    payload_triage = TriageDecisionPayload(
+        decision_type=DecisionType.CONFIRM,
+        approved_quantity=1,
+        confirmed_datetime=datetime(2030, 1, 2, 10, 0, tzinfo=timezone.utc),
+        confirmed_vehicle_type="sedan",
+        tariff_value=200.0,
+    )
+    triage_request(session, sup, req, payload_triage)
+    assert req.status == RequestStatus.CONFIRMED
+    
+    from app.services.workflow import request_otp
+    otp_code = request_otp(session, partner, req)
+    
+    # We clear the list so we only assert emails sent during acceptance signing
+    sent_emails.clear()
+    
+    from app.services.workflow import sign_acceptance
+    sign_acceptance(session, partner, req, otp_code, "127.0.0.1", "test-agent")
+    
+    sup_emails = [e for e in sent_emails if e["to_email"] == sup.email]
+    assert len(sup_emails) == 1
+    assert "Aceite de cotação registrado" in sup_emails[0]["subject"]
+    assert "registrou o aceite da proposta" in sup_emails[0]["body"]
+
+
+def test_dispatch_trip_sends_partner_email(session, monkeypatch):
+    sent_emails = []
+    def mock_send_email(to_email, subject, body, attachment_path=None):
+        sent_emails.append({
+            "to_email": to_email,
+            "subject": subject,
+            "body": body,
+            "attachment_path": attachment_path
+        })
+    monkeypatch.setattr("app.services.workflow.send_email", mock_send_email)
+
+    req = _mk_request(session)
+    req.request_type = "Cotação de preço"
+    session.add(req)
+    session.commit()
+    
+    partner = session.exec(select(User).where(User.role == UserRole.PARTNER_REQUESTER)).first()
+    sup = session.exec(select(User).where(User.role == UserRole.BASE_SUPERVISOR)).first()
+    
+    from app.models import TriageDecisionPayload
+    payload_triage = TriageDecisionPayload(
+        decision_type=DecisionType.CONFIRM,
+        approved_quantity=1,
+        confirmed_datetime=datetime(2030, 1, 2, 10, 0, tzinfo=timezone.utc),
+        confirmed_vehicle_type="sedan",
+        tariff_value=200.0,
+    )
+    triage_request(session, sup, req, payload_triage)
+    
+    from app.services.workflow import request_otp, sign_acceptance
+    otp_code = request_otp(session, partner, req)
+    sign_acceptance(session, partner, req, otp_code, "127.0.0.1", "test-agent")
+    assert req.status == RequestStatus.ACCEPTED
+    
+    driver = session.exec(select(Driver)).first()
+    vehicle = session.exec(select(Vehicle)).first()
+    
+    # We clear the list so we only assert emails sent during dispatch
+    sent_emails.clear()
+    
+    from app.services.workflow import dispatch_trip
+    dispatch_trip(session, sup, req, driver.id, vehicle.id, datetime(2030, 1, 2, 10, 15, tzinfo=timezone.utc))
+    
+    partner_emails = [e for e in sent_emails if e["to_email"] == partner.email]
+    assert len(partner_emails) == 1
+    assert "Viagem em execução" in partner_emails[0]["subject"]
+    assert driver.name in partner_emails[0]["body"]
+    assert vehicle.plate in partner_emails[0]["body"]
+
+
+
+
+
 
 
 
