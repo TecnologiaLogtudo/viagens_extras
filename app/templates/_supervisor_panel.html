@@ -160,7 +160,16 @@
           </div>
         </div>
       </div>
+      {% else %}
+        <div class="muted" style="grid-column: 1 / -1; text-align: center; padding: 2.5rem; border: 1px dashed var(--line); border-radius: 12px; background: #fffcf5; font-weight: 500; font-size: 0.88rem;">
+          Nenhum motorista cadastrado para esta base.
+        </div>
       {% endfor %}
+    </div>
+
+    <!-- No Search Results fallback -->
+    <div id="no-drivers-search-results" class="muted" style="display: none; text-align: center; padding: 2.5rem; border: 1px dashed var(--line); border-radius: 12px; background: #fffcf5; margin-top: 1rem; font-weight: 500; font-size: 0.88rem;">
+      Nenhum motorista encontrado com os filtros e busca aplicados.
     </div>
 
     <!-- Javascript Actions for client-side search, status filters and copy feature -->
@@ -175,6 +184,7 @@
         const activeBtn = document.querySelector('.filter-badge-btn.active');
         const activeStatusFilter = activeBtn ? activeBtn.textContent.trim().toLowerCase() : 'todos';
 
+        let visibleCount = 0;
         document.querySelectorAll('.driver-profile-card').forEach(card => {
           const driverName = card.getAttribute('data-driver-name').normalize("NFD").replace(/[\u0300-\u036f]/g, "");
           const driverStatus = card.getAttribute('data-driver-status');
@@ -188,10 +198,17 @@
 
           if (matchesSearch && matchesStatus) {
             card.style.display = 'flex';
+            visibleCount++;
           } else {
             card.style.display = 'none';
           }
         });
+
+        // Toggle "no results" message
+        const noResultsEl = document.getElementById('no-drivers-search-results');
+        if (noResultsEl) {
+          noResultsEl.style.display = visibleCount === 0 ? 'block' : 'none';
+        }
       }
 
       /**

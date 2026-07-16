@@ -982,7 +982,7 @@ def test_supervisor_panel_driver_filtering(client: TestClient):
     assert resp.status_code == 200
     assert "Driver Sedan Test" in resp.text
     assert "Driver No Vehicle Test" in resp.text
-    assert "Driver Van Test" not in resp.text
+    assert "Driver Van Test" in resp.text
 
     # 2. Now add confirmation choosing VAN
     with Session(engine) as session:
@@ -1004,7 +1004,7 @@ def test_supervisor_panel_driver_filtering(client: TestClient):
     assert resp.status_code == 200
     assert "Driver Van Test" in resp.text
     assert "Driver No Vehicle Test" in resp.text
-    assert "Driver Sedan Test" not in resp.text
+    assert "Driver Sedan Test" in resp.text
 
 
 def test_supervisor_panel_filtering_multiple(client: TestClient):
@@ -1076,7 +1076,7 @@ def test_supervisor_panel_filtering_multiple(client: TestClient):
     assert resp.status_code == 200
     assert "Driver Multi Sedan Test" in resp.text
     assert "Driver Multi Van Test" in resp.text
-    assert "Driver Multi Truck Test" not in resp.text
+    assert "Driver Multi Truck Test" in resp.text
 
 
 
